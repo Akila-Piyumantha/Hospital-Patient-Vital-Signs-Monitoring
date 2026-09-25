@@ -1,0 +1,113 @@
+# Task Board
+
+Tick a box when the task meets its acceptance criteria in [PROJECT_PLAN.md](PROJECT_PLAN.md) section 7 and its PR is merged (reviewed by a different member).
+Milestones: **M1 = D5** walking skeleton · **M2 = D8** both layers integrated · **M3 = D12** code freeze · **D14** submit.
+
+---
+
+## Member A — Platform, Ingestion & Observability
+
+**Name:** ________
+
+### D1–D3
+- [ ] A1 Repo scaffold: `.env.example`, Makefile, `.gitignore`, lint config
+- [ ] A2 Docker Compose: Kafka, Postgres, Spark, Airflow, Prometheus, Grafana, API (healthchecks, memory limits)
+- [ ] A3 `common/`: config loader, `sim_clock`, JSON logging helper, pydantic schemas
+- [ ] A5 `create_topics.sh` (`vitals.raw` x3 partitions, `vitals.dlq`)
+- [ ] J1 Kickoff workshop attended, decisions confirmed
+- [ ] J2 Contracts signed off
+
+### D2–D7
+- [ ] A4 Vitals simulator (20 patients, deterioration episodes, spikes, fault injection, idempotent producer)
+- [ ] A6 Lab generator (one CSV per sim day, correlated with episodes, atomic drop, late/missing/corrupt option)
+- [ ] A7 `seed_patients.py`, Prometheus scrape config, kafka-exporter, producer metrics
+- [ ] **M1 (D5)** skeleton demo
+
+### D7–D10
+- [ ] A8 Alert rules + Alertmanager (NoVitalsData, ConsumerLagHigh, DlqRateHigh, StreamingQueryStopped, LabFileMissing, ApiDown, DagFailed), each shown firing
+- [ ] A9 Grafana dashboards: ward live view + pipeline health (provisioned as code)
+- [ ] A10 Tests + GitHub Actions CI (simulator, sim_clock, schemas)
+- [ ] **M2 (D8)** both layers integrated
+
+### D11–D14
+- [ ] A11 `make e2e` smoke test + 30-min soak run
+- [ ] A12 README (architecture, setup, run, reproduce, troubleshooting)
+- [ ] J5 Cross-review of a peer's module (viva prep)
+- [ ] J6 Soak run, freeze, README dry-run on a clean clone
+- [ ] Report: Ingestion, Tech stack, Observability, architecture diagram, ingestion paragraph in the architecture chapter
+- [ ] J7/J8 Report assembly, proofread, own demo segment, contribution statement
+
+---
+
+## Member B — Speed layer (Spark Structured Streaming) & Lake
+
+**Name:** ________
+
+### D1–D5
+- [ ] B1 `common/scoring.py` with unit tests for every threshold boundary
+- [ ] B2 Spark container (connector versions pinned, JDBC driver, submit command in Compose)
+- [ ] B3 Ingest and validate: schema, casting, range checks, DLQ, dedupe by `event_id`
+- [ ] J1 Kickoff workshop attended, decisions confirmed
+- [ ] J2 Contracts signed off; review `sql/init.sql` streaming tables
+- [ ] **M1 (D5)** skeleton demo
+
+### D4–D8
+- [ ] B4 Enrichment: join with `patients`, MAP, pulse pressure, per-reading `news_score`
+- [ ] B5 Windowed aggregation (2 min / 30 s, 1 min watermark), trend slopes, sustained-abnormal counter
+- [ ] B6 `foreachBatch` sinks: idempotent Postgres upserts + Parquet by `sim_day`, checkpoints, kill/restart test
+- [ ] **M2 (D8)** both layers integrated
+
+### D7–D11
+- [ ] B7 Alert engine: rules, severity, reason codes, cooldown, open/resolved lifecycle
+- [ ] B8 Lab feedback loop: stream-static join with `patient_lab_risk`, before/after evidence
+- [ ] B9 Streaming metrics via `StreamingQueryListener` + structured logs per micro-batch
+- [ ] B10 Unit tests + local-mode Spark integration test
+
+### D10–D14
+- [ ] B11 Performance/tuning notes
+- [ ] J5 Cross-review of a peer's module (viva prep)
+- [ ] J6 Soak run, freeze
+- [ ] Report: Lambda vs Kappa chapter (with A's and C's paragraphs), processing layer, storage design
+- [ ] J7/J8 Report assembly review, own demo segment, contribution statement
+
+---
+
+## Member C — Batch layer, Serving & Reporting
+
+**Name:** ________
+
+### D1–D5
+- [ ] C1 `sql/init.sql`: all tables, keys, indexes, `pipeline_run_log` (B reviews)
+- [ ] C2 Airflow setup: JDK + pyspark image, LocalExecutor, mounts, env connections
+- [ ] C6 (part 1) FastAPI skeleton with `/api/ward/summary` and `/health`
+- [ ] J1 Kickoff workshop attended, decisions confirmed
+- [ ] J2 Contracts signed off
+- [ ] **M1 (D5)** skeleton demo
+
+### D5–D10
+- [ ] C3 DAG `daily_lab_risk_report`: sensor → validate → load → lab risk → batch job → report → health check → archive, with retries, SLA, failure callback
+- [ ] C4 Batch Spark job: full previous-day recompute from Parquet, speed-vs-batch discrepancy metric
+- [ ] C5 Daily consolidated risk report (HTML + CSV + `patient_risk_report`, risk before vs after labs)
+- [ ] C6 (part 2) Remaining endpoints: patients, vitals, alerts, reports, `/metrics`, pagination, OpenAPI
+- [ ] C7 Failure and idempotency checks (replay a day, corrupt file, unknown patient)
+- [ ] **M2 (D8)** both layers integrated
+
+### D6–D14
+- [ ] C8 Tests: lab parsing, risk merge, API with test DB, DAG import
+- [ ] J5 Cross-review of a peer's module (viva prep)
+- [ ] J6 Soak run, freeze
+- [ ] C9 Report: use case and requirements, serving layer, results with screenshots, limitations; consistency paragraph in the architecture chapter
+- [ ] J7/J8 Coordinate demo video, own demo segment, contribution statement
+
+---
+
+## Shared checkpoints (all three)
+
+- [ ] D1 Kickoff (J1)
+- [ ] D2 Contracts frozen (J2)
+- [ ] D5 M1 walking skeleton demo (J3)
+- [ ] D8 M2 two-layer integration (J4)
+- [ ] D10–D12 Cross-reviews done (J5)
+- [ ] D12 M3 code freeze, acceptance checklist ticked (J6)
+- [ ] D13 Report PDF + demo video ready (J7, J8)
+- [ ] D14 Submitted (repo link or zip, PDF, video)
