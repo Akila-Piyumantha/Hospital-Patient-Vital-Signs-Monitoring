@@ -169,8 +169,8 @@ P001,lactate,3.1,0.5-2.0,2026-03-01T08:30:00Z
 | Table | Written by | Key columns |
 |---|---|---|
 | `patients` | seed script (A) | patient_id, name/alias, age, bed, ward, comorbidity_flag, baseline HR/BP |
-| `vitals_window` | Spark (B) | patient_id, window_start, window_end, avg/min/max per vital, n_readings, trend_slope_hr, trend_slope_spo2 |
-| `patient_status` | Spark (B) | patient_id, last_reading_at, latest vitals, news_score, lab_risk_points, risk_tier, trend_flag |
+| `vitals_window` | Spark (B) | patient_id, window_start, window_end, `avg_/min_/max_` + `heart_rate`, `spo2`, `systolic_bp`, `diastolic_bp`, `temperature` (e.g. `avg_heart_rate`, `min_spo2`), n_readings, trend_slope_hr, trend_slope_spo2 |
+| `patient_status` | Spark (B) | patient_id, last_reading_at, latest vitals as `heart_rate`, `spo2`, `systolic_bp`, `diastolic_bp`, `temperature`, news_score, lab_risk_points, risk_tier (`LOW`/`MEDIUM`/`HIGH`/`CRITICAL`), trend_flag |
 | `alerts` | Spark (B) | alert_id, patient_id, severity, reason_code, value, threshold, opened_at, resolved_at |
 | `dlq_events` | Spark (B) | reason, payload, failed_at |
 | `lab_results` | Airflow (C) | patient_id, test_type, result_value, ref_low, ref_high, abnormal_flag, collected_at, sim_day |

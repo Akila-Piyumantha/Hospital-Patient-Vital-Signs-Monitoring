@@ -1,0 +1,9 @@
+# Member C: FastAPI serving layer goes here.
+#
+# Expected shape (see PROJECT_PLAN.md C6):
+#   services:
+#     api:
+#       build: ../serving
+#       depends_on: { postgres: {condition: service_healthy} }
+#       ports: ["8000:8000"]           # /health, /metrics (scraped as job "api"), /docs
+services: {}

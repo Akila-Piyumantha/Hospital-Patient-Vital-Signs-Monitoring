@@ -1,0 +1,9 @@
+# Member C: Airflow (LocalExecutor) goes here.
+#
+# Expected shape (see PROJECT_PLAN.md C2):
+#   - metadata DB: database "airflow" already exists in the shared Postgres (sql/00_create_databases.sql)
+#   - mount ../airflow/dags, ../batch, ../common and ../data (landing zone: data/landing/labs)
+#   - batch jobs push their metrics to the Pushgateway at pushgateway:9091
+#     (airflow_dag_last_success_timestamp, lab_files_ingested_total, lab_file_missing_total,
+#      speed_batch_discrepancy_ratio) - Prometheus scrapes it (job "pushgateway").
+services: {}

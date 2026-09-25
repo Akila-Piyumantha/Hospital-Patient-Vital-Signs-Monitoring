@@ -1,0 +1,6 @@
+# Runtime dependencies of the simulators / shared library (Member A).
+# Spark, Airflow and API images (Members B/C) keep their own requirements.
+confluent-kafka>=2.6,<3
+prometheus-client>=0.20,<1
+pydantic>=2.7,<3
+psycopg2-binary>=2.9.10,<3

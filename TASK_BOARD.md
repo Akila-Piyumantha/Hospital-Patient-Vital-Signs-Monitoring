@@ -10,28 +10,28 @@ Milestones: **M1 = D5** walking skeleton · **M2 = D8** both layers integrated �
 **Name:** ________
 
 ### D1–D3
-- [ ] A1 Repo scaffold: `.env.example`, Makefile, `.gitignore`, lint config
-- [ ] A2 Docker Compose: Kafka, Postgres, Spark, Airflow, Prometheus, Grafana, API (healthchecks, memory limits)
-- [ ] A3 `common/`: config loader, `sim_clock`, JSON logging helper, pydantic schemas
-- [ ] A5 `create_topics.sh` (`vitals.raw` x3 partitions, `vitals.dlq`)
+- [x] A1 Repo scaffold: `.env.example`, Makefile, `.gitignore`, lint config
+- [x] A2 Docker Compose: Kafka, Postgres, Prometheus, Grafana, alerting, simulators (healthchecks, memory limits) — Spark/Airflow/API services are added by B/C in `compose/*.yml`
+- [x] A3 `common/`: config loader, `sim_clock`, JSON logging helper, pydantic schemas
+- [x] A5 `create_topics.sh` (`vitals.raw` x3 partitions, `vitals.dlq`)
 - [ ] J1 Kickoff workshop attended, decisions confirmed
 - [ ] J2 Contracts signed off
 
 ### D2–D7
-- [ ] A4 Vitals simulator (20 patients, deterioration episodes, spikes, fault injection, idempotent producer)
-- [ ] A6 Lab generator (one CSV per sim day, correlated with episodes, atomic drop, late/missing/corrupt option)
-- [ ] A7 `seed_patients.py`, Prometheus scrape config, kafka-exporter, producer metrics
+- [x] A4 Vitals simulator (20 patients, deterioration episodes, spikes, fault injection, idempotent producer)
+- [x] A6 Lab generator (one CSV per sim day, correlated with episodes, atomic drop, late/missing/corrupt option)
+- [x] A7 `seed_patients.py`, Prometheus scrape config, kafka-exporter, producer metrics
 - [ ] **M1 (D5)** skeleton demo
 
 ### D7–D10
-- [ ] A8 Alert rules + Alertmanager (NoVitalsData, ConsumerLagHigh, DlqRateHigh, StreamingQueryStopped, LabFileMissing, ApiDown, DagFailed), each shown firing
-- [ ] A9 Grafana dashboards: ward live view + pipeline health (provisioned as code)
-- [ ] A10 Tests + GitHub Actions CI (simulator, sim_clock, schemas)
+- [ ] A8 Alert rules + Alertmanager (NoVitalsData, ConsumerLagHigh, DlqRateHigh, StreamingQueryStopped, LabFileMissing, ApiDown, DagFailed), each shown firing — rules written and validated; NoVitalsData, SimulatorDown, ApiDown, StreamingQueryStopped, ScrapeTargetDown demonstrated live; the rest need B/C metrics
+- [ ] A9 Grafana dashboards: ward live view + pipeline health (provisioned as code) — both provisioned and datasources healthy; ward panels wait for B/C tables
+- [x] A10 Tests + GitHub Actions CI (simulator, sim_clock, schemas)
 - [ ] **M2 (D8)** both layers integrated
 
 ### D11–D14
-- [ ] A11 `make e2e` smoke test + 30-min soak run
-- [ ] A12 README (architecture, setup, run, reproduce, troubleshooting)
+- [ ] A11 `make e2e` smoke test + 30-min soak run — smoke test done; `--full` checks need B/C; soak run in progress
+- [ ] A12 README (architecture, setup, run, reproduce, troubleshooting) — written; needs B/C run sections and a clean-clone dry-run
 - [ ] J5 Cross-review of a peer's module (viva prep)
 - [ ] J6 Soak run, freeze, README dry-run on a clean clone
 - [ ] Report: Ingestion, Tech stack, Observability, architecture diagram, ingestion paragraph in the architecture chapter

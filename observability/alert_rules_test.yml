@@ -1,0 +1,180 @@
+# Unit tests for alert_rules.yml: synthetic time series in, expected alerts out.
+#   docker run --rm --entrypoint promtool -v "$PWD/observability:/etc/prometheus:ro" \
+#     prom/prometheus:v2.53.0 test rules /etc/prometheus/alert_rules_test.yml
+# (also run in CI; `make test-alerts`). Lets the rules that depend on Member B/C metrics be
+# verified before those components exist.
+rule_files:
+  - alert_rules.yml
+
+evaluation_interval: 10s
+
+tests:
+  # ------------------------------------------------------------------ NoVitalsData
+  - name: NoVitalsData fires when offsets stop advancing, not while they grow
+    interval: 10s
+    input_series:
+      - series: 'kafka_topic_partition_current_offset{topic="vitals.raw",partition="0"}'
+        values: '0+20x30 600x30' # grows for 5 min, then flat
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: NoVitalsData
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: NoVitalsData
+        exp_alerts:
+          - exp_labels: {severity: critical, stage: ingestion}
+            exp_annotations:
+              summary: "No vital-sign readings reaching Kafka"
+              description: "vitals.raw received no messages for 45s+ (docker compose stop vitals-simulator)."
+
+  - name: NoVitalsData fires when the topic metric disappears entirely
+    interval: 10s
+    input_series:
+      - series: 'up{job="kafka-exporter"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: NoVitalsData
+        exp_alerts:
+          - exp_labels: {severity: critical, stage: ingestion, topic: vitals.raw}
+            exp_annotations:
+              summary: "No vital-sign readings reaching Kafka"
+              description: "vitals.raw received no messages for 45s+ (docker compose stop vitals-simulator)."
+
+  # ------------------------------------------------------------------ DlqRateHigh
+  - name: DlqRateHigh fires at 10% rejected, stays quiet at 2%
+    interval: 10s
+    input_series:
+      - series: 'vitals_valid_total{job="spark-streaming"}'
+        values: '0+90x60'
+      - series: 'vitals_dlq_total{job="spark-streaming"}'
+        values: '0+10x60'
+      - series: 'vitals_valid_total{job="quiet"}'
+        values: '0+98x60'
+      - series: 'vitals_dlq_total{job="quiet"}'
+        values: '0+2x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: DlqRateHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, stage: processing}
+            exp_annotations:
+              summary: "More than 5% of readings are being rejected"
+              description: "DLQ ratio is 6% (FAULT_PROFILE=chaos demonstrates it)."
+
+  # ------------------------------------------------------------------ LabFileMissing
+  - name: LabFileMissing fires when the sensor reports a missing file
+    interval: 10s
+    input_series:
+      - series: 'lab_file_missing_total{job="airflow"}'
+        values: '0x30 1x30'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: LabFileMissing
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: LabFileMissing
+        exp_alerts:
+          - exp_labels: {severity: critical, stage: orchestration, job: airflow}
+            exp_annotations:
+              summary: "Daily lab file did not arrive"
+              description: "The wait_for_lab_file sensor timed out (LAB_FORCE_MISSING_DAYS=<n> demonstrates it)."
+
+  # ------------------------------------------------------------------ DagFailed
+  - name: DagFailed fires when the last success is older than 11 minutes
+    interval: 30s
+    input_series:
+      # success recorded at t=0 (unix 0) and never again
+      - series: 'airflow_dag_last_success_timestamp{dag_id="daily_lab_risk_report"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DagFailed
+        exp_alerts: []
+      - eval_time: 13m
+        alertname: DagFailed
+        exp_alerts:
+          - exp_labels: {severity: critical, stage: orchestration, dag_id: daily_lab_risk_report}
+            exp_annotations:
+              summary: "Daily lab risk report DAG has not succeeded recently"
+              description: "Last success 13m 0s ago."
+
+  # ------------------------------------------------------------------ Consumer lag / staleness
+  - name: ConsumerLagHigh fires above 500 messages for a minute
+    interval: 10s
+    input_series:
+      - series: 'kafka_consumergroup_lag{consumergroup="spark-vitals",topic="vitals.raw",partition="0"}'
+        values: '0x10 400x10 700x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ConsumerLagHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, stage: processing, consumergroup: spark-vitals}
+            exp_annotations:
+              summary: "Speed layer is falling behind"
+              description: "Consumer group spark-vitals is 700 messages behind."
+
+  - name: PipelineDataStale fires when the newest event is older than 60 s
+    interval: 10s
+    input_series:
+      - series: 'pipeline_last_event_age_seconds{job="api"}'
+        values: '2x20 120x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: PipelineDataStale
+        exp_alerts:
+          - exp_labels: {severity: critical, stage: processing, job: api}
+            exp_annotations:
+              summary: "Pipeline data is stale"
+              description: "Newest processed reading is 2m 0s old."
+
+  # ------------------------------------------------------------------ Liveness rules
+  - name: StreamingQueryStopped, ApiDown and SimulatorDown fire on missing scrape targets
+    interval: 10s
+    input_series:
+      - series: 'up{job="spark-streaming",instance="spark-streaming:8003"}'
+        values: '1x10 0x50'
+      - series: 'up{job="api",instance="api:8000"}'
+        values: '1x10 0x50'
+      - series: 'up{job="vitals-simulator",instance="vitals-simulator:8001"}'
+        values: '1x10 0x50'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: StreamingQueryStopped
+        exp_alerts:
+          - exp_labels: {severity: critical, stage: processing, job: spark-streaming, instance: "spark-streaming:8003"}
+            exp_annotations:
+              summary: "Spark streaming job is not running"
+              description: "Prometheus cannot scrape spark-streaming:8003 (docker compose stop spark-streaming)."
+      - eval_time: 4m
+        alertname: ApiDown
+        exp_alerts:
+          - exp_labels: {severity: critical, stage: serving, job: api, instance: "api:8000"}
+            exp_annotations:
+              summary: "Serving API is down"
+              description: "Prometheus cannot scrape api:8000."
+      - eval_time: 4m
+        alertname: SimulatorDown
+        exp_alerts:
+          - exp_labels: {severity: critical, stage: ingestion, job: vitals-simulator, instance: "vitals-simulator:8001"}
+            exp_annotations:
+              summary: "Vitals simulator is unreachable"
+              description: "Prometheus cannot scrape vitals-simulator:8001."
+
+  # ------------------------------------------------------------------ Lambda consistency
+  - name: SpeedBatchDiscrepancy fires above 10%
+    interval: 30s
+    input_series:
+      - series: 'speed_batch_discrepancy_ratio{job="pushgateway"}'
+        values: '0.02x4 0.15x6'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: SpeedBatchDiscrepancy
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: SpeedBatchDiscrepancy
+        exp_alerts:
+          - exp_labels: {severity: warning, stage: orchestration, job: pushgateway}
+            exp_annotations:
+              summary: "Speed and batch layers disagree by more than 10%"
+              description: "Discrepancy 15%: late data dropped by the watermark or a logic drift."

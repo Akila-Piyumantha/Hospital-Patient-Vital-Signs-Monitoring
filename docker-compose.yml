@@ -1,0 +1,244 @@
+# Hospital Patient Vital Signs Monitoring - platform layer (owner: Member A).
+#
+#   docker compose up -d --build          # everything below
+#   docker compose down -v && rm -rf data/*   # full reset (or: make reset)
+#
+# Members B and C add their services in compose/*.yml (Spark streaming job, Airflow,
+# API); they are pulled in through `include:` so nobody edits the same file.
+# All settings have defaults; override them in .env (see .env.example).
+
+include:
+  - path: compose/spark.yml     # Member B: Spark Structured Streaming job
+  - path: compose/airflow.yml   # Member C: Airflow (batch layer)
+  - path: compose/api.yml       # Member C: FastAPI serving layer
+
+x-sim-env: &sim-env
+  SIM_DAY_SECONDS: ${SIM_DAY_SECONDS:-300}
+  SIM_EPOCH: ${SIM_EPOCH:-}
+  SIM_SEED: ${SIM_SEED:-42}
+  NUM_PATIENTS: ${NUM_PATIENTS:-20}
+  NUM_DETERIORATING: ${NUM_DETERIORATING:-4}
+  NUM_OCCULT: ${NUM_OCCULT:-2}
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  VITALS_TOPIC: ${VITALS_TOPIC:-vitals.raw}
+  DLQ_TOPIC: ${DLQ_TOPIC:-vitals.dlq}
+  POSTGRES_HOST: postgres
+  POSTGRES_USER: ${POSTGRES_USER:-hospital}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hospital}
+  POSTGRES_DB: ${POSTGRES_DB:-hospital}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  # ------------------------------------------------------------------ ingestion
+  kafka:
+    image: apache/kafka:3.8.0
+    hostname: kafka
+    ports:
+      - "29092:29092"   # for tools running on the host
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,EXTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"   # topics come from kafka-init only (typos fail loudly)
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+    mem_limit: 1g
+    restart: unless-stopped
+
+  kafka-init:
+    image: apache/kafka:3.8.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      VITALS_TOPIC: ${VITALS_TOPIC:-vitals.raw}
+      DLQ_TOPIC: ${DLQ_TOPIC:-vitals.dlq}
+      VITALS_PARTITIONS: ${VITALS_PARTITIONS:-3}
+      KAFKA_HEAP_OPTS: -Xmx128m
+    entrypoint: ["/bin/sh", "/scripts/create_topics.sh"]
+    volumes:
+      - ./kafka/create_topics.sh:/scripts/create_topics.sh:ro
+    restart: "no"
+
+  vitals-simulator:
+    build:
+      context: .
+      dockerfile: simulators/Dockerfile
+    command: ["python", "-m", "simulators.vitals_producer"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *sim-env
+      VITALS_INTERVAL_SECONDS: ${VITALS_INTERVAL_SECONDS:-2}
+      SPIKE_RATE: ${SPIKE_RATE:-0.01}
+      FAULT_PROFILE: ${FAULT_PROFILE:-low}   # off | low | chaos
+      METRICS_PORT: 8001
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./data:/app/data
+    mem_limit: 256m
+    restart: unless-stopped
+
+  lab-generator:
+    build:
+      context: .
+      dockerfile: simulators/Dockerfile
+    command: ["python", "-m", "simulators.lab_generator"]
+    environment:
+      <<: *sim-env
+      LAB_FORCE_MISSING_DAYS: ${LAB_FORCE_MISSING_DAYS:-}
+      LAB_FORCE_LATE_DAYS: ${LAB_FORCE_LATE_DAYS:-}
+      LAB_FORCE_CORRUPT_DAYS: ${LAB_FORCE_CORRUPT_DAYS:-}
+      LAB_FORCE_BADSCHEMA_DAYS: ${LAB_FORCE_BADSCHEMA_DAYS:-}
+      LAB_MISSING_RATE: ${LAB_MISSING_RATE:-0}
+      LAB_LATE_RATE: ${LAB_LATE_RATE:-0}
+      LAB_CORRUPT_RATE: ${LAB_CORRUPT_RATE:-0}
+      LAB_LATE_SECONDS: ${LAB_LATE_SECONDS:-90}
+      METRICS_PORT: 8002
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./data:/app/data
+    mem_limit: 256m
+    restart: unless-stopped
+
+  seed-patients:
+    build:
+      context: .
+      dockerfile: simulators/Dockerfile
+    command: ["python", "-m", "simulators.seed_patients"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *sim-env
+    restart: "no"
+
+  # -------------------------------------------------------------------- storage
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hospital}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hospital}
+      POSTGRES_DB: ${POSTGRES_DB:-hospital}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      # 00_ creates the airflow DB, 01_ the patients table, init.sql (Member C) the rest
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hospital} -d ${POSTGRES_DB:-hospital}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 512m
+    restart: unless-stopped
+
+  # -------------------------------------------------------------- observability
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.8.0
+    command: ["--kafka.server=kafka:9092"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "9308:9308"
+    mem_limit: 128m
+    restart: unless-stopped
+
+  pushgateway:
+    image: prom/pushgateway:v1.9.0
+    ports:
+      - "9091:9091"
+    mem_limit: 64m
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2d
+      - --web.enable-lifecycle
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - alertmanager
+    mem_limit: 384m
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+    volumes:
+      - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+    depends_on:
+      - alert-webhook
+    mem_limit: 64m
+    restart: unless-stopped
+
+  alert-webhook:
+    build: ./observability/alert_webhook
+    environment:
+      ALERT_LOG: /data/alerts/alerts.jsonl
+    volumes:
+      - ./data/alerts:/data/alerts
+    ports:
+      - "5001:5001"
+    mem_limit: 64m
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"      # read-only dashboards without login (demo/video)
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/pipeline-health.json
+      POSTGRES_USER: ${POSTGRES_USER:-hospital}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hospital}
+      POSTGRES_DB: ${POSTGRES_DB:-hospital}
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    mem_limit: 256m
+    restart: unless-stopped
+
+volumes:
+  kafka-data:
+  pg-data:
+  prometheus-data:
+  grafana-data:

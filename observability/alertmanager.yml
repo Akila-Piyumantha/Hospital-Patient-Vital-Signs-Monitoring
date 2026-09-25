@@ -1,0 +1,14 @@
+# Alertmanager routing (owner: Member A). Every alert goes to the webhook receiver, which
+# logs it as JSON and appends it to data/alerts/alerts.jsonl (evidence for the report).
+route:
+  receiver: webhook
+  group_by: [alertname]
+  group_wait: 5s        # short on purpose: demos should not wait half a minute
+  group_interval: 30s
+  repeat_interval: 5m
+
+receivers:
+  - name: webhook
+    webhook_configs:
+      - url: http://alert-webhook:5001/alerts
+        send_resolved: true

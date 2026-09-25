@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Unit tests
+        run: pytest
+
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate docker-compose.yml
+        run: docker compose config --quiet
+      - name: Validate Prometheus config and alert rules
+        run: |
+          docker run --rm --entrypoint promtool -v "$PWD/observability:/etc/prometheus:ro" \
+            prom/prometheus:v2.53.0 check config /etc/prometheus/prometheus.yml
+      - name: Unit-test alert rules (synthetic time series)
+        run: |
+          docker run --rm --entrypoint promtool -v "$PWD/observability:/etc/prometheus:ro" \
+            prom/prometheus:v2.53.0 test rules /etc/prometheus/alert_rules_test.yml
+      - name: Validate Alertmanager config
+        run: |
+          docker run --rm --entrypoint amtool -v "$PWD/observability:/cfg:ro" \
+            prom/alertmanager:v0.27.0 check-config /cfg/alertmanager.yml

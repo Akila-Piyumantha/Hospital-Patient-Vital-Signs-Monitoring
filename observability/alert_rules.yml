@@ -1,0 +1,125 @@
+# Alert rules as code (owner: Member A). Metric names follow contract 4.7 of PROJECT_PLAN.md.
+#
+# Simulated clock: 1 sim day = 5 real minutes, so "no lab file for 10 min" = 2 missed days.
+# Every rule names the fault that demonstrates it (README, "Demonstrating the alerts").
+groups:
+  - name: ingestion
+    rules:
+      - alert: NoVitalsData
+        # Kafka offsets of vitals.raw stopped advancing (or the topic vanished from the exporter).
+        expr: >
+          sum(rate(kafka_topic_partition_current_offset{topic="vitals.raw"}[1m])) == 0
+          or absent(kafka_topic_partition_current_offset{topic="vitals.raw"})
+        for: 45s
+        labels: {severity: critical, stage: ingestion}
+        annotations:
+          summary: "No vital-sign readings reaching Kafka"
+          description: "vitals.raw received no messages for 45s+ (docker compose stop vitals-simulator)."
+
+      - alert: SimulatorDown
+        expr: up{job="vitals-simulator"} == 0
+        for: 30s
+        labels: {severity: critical, stage: ingestion}
+        annotations:
+          summary: "Vitals simulator is unreachable"
+          description: "Prometheus cannot scrape vitals-simulator:8001."
+
+      - alert: ProducerDeliveryErrors
+        expr: rate(vitals_produce_errors_total[1m]) > 0
+        for: 30s
+        labels: {severity: warning, stage: ingestion}
+        annotations:
+          summary: "Kafka delivery failures in the vitals producer"
+          description: "{{ $value | humanize }} failed deliveries/s."
+
+      - alert: LabFileMissing
+        # lab_file_missing_total is pushed by the Airflow sensor task (Member C).
+        expr: increase(lab_file_missing_total[10m]) > 0
+        labels: {severity: critical, stage: orchestration}
+        annotations:
+          summary: "Daily lab file did not arrive"
+          description: "The wait_for_lab_file sensor timed out (LAB_FORCE_MISSING_DAYS=<n> demonstrates it)."
+
+  - name: processing
+    rules:
+      - alert: PipelineDataStale
+        # Age of the newest reading seen by the pipeline, exported by the API / Spark job.
+        expr: pipeline_last_event_age_seconds > 60
+        for: 30s
+        labels: {severity: critical, stage: processing}
+        annotations:
+          summary: "Pipeline data is stale"
+          description: "Newest processed reading is {{ $value | humanizeDuration }} old."
+
+      - alert: ConsumerLagHigh
+        # Requires the Spark job to commit offsets under a fixed kafka.group.id (Member B).
+        expr: sum by (consumergroup) (kafka_consumergroup_lag{topic="vitals.raw"}) > 500
+        for: 1m
+        labels: {severity: warning, stage: processing}
+        annotations:
+          summary: "Speed layer is falling behind"
+          description: "Consumer group {{ $labels.consumergroup }} is {{ $value | humanize }} messages behind."
+
+      - alert: DlqRateHigh
+        # Error-rate rule: share of readings rejected by validation.
+        expr: >
+          sum(rate(vitals_dlq_total[2m]))
+          / (sum(rate(vitals_valid_total[2m])) + sum(rate(vitals_dlq_total[2m]))) > 0.05
+        for: 1m
+        labels: {severity: warning, stage: processing}
+        annotations:
+          summary: "More than 5% of readings are being rejected"
+          description: "DLQ ratio is {{ $value | humanizePercentage }} (FAULT_PROFILE=chaos demonstrates it)."
+
+      - alert: StreamingQueryStopped
+        expr: up{job="spark-streaming"} == 0
+        for: 1m
+        labels: {severity: critical, stage: processing}
+        annotations:
+          summary: "Spark streaming job is not running"
+          description: "Prometheus cannot scrape spark-streaming:8003 (docker compose stop spark-streaming)."
+
+      - alert: SparkBatchSlow
+        expr: spark_batch_duration_seconds > 10
+        for: 2m
+        labels: {severity: warning, stage: processing}
+        annotations:
+          summary: "Micro-batches take longer than 10s"
+          description: "Trigger interval is 5-10s; sustained slow batches mean lag will build up."
+
+      - alert: SpeedBatchDiscrepancy
+        # Lambda consistency check computed by the daily batch job (Member C).
+        expr: speed_batch_discrepancy_ratio > 0.10
+        labels: {severity: warning, stage: orchestration}
+        annotations:
+          summary: "Speed and batch layers disagree by more than 10%"
+          description: "Discrepancy {{ $value | humanizePercentage }}: late data dropped by the watermark or a logic drift."
+
+  - name: orchestration_and_serving
+    rules:
+      - alert: DagFailed
+        # DAG runs once per sim day (5 min); 11 min without a success = 2 missed days.
+        expr: time() - airflow_dag_last_success_timestamp{dag_id="daily_lab_risk_report"} > 660
+        for: 30s
+        labels: {severity: critical, stage: orchestration}
+        annotations:
+          summary: "Daily lab risk report DAG has not succeeded recently"
+          description: "Last success {{ $value | humanizeDuration }} ago."
+
+      - alert: ApiDown
+        expr: up{job="api"} == 0
+        for: 1m
+        labels: {severity: critical, stage: serving}
+        annotations:
+          summary: "Serving API is down"
+          description: "Prometheus cannot scrape api:8000."
+
+  - name: platform
+    rules:
+      - alert: ScrapeTargetDown
+        expr: up{job=~"vitals-simulator|lab-generator|kafka-exporter|pushgateway|alertmanager"} == 0
+        for: 1m
+        labels: {severity: warning, stage: observability}
+        annotations:
+          summary: "Scrape target {{ $labels.job }} is down"
+          description: "{{ $labels.instance }} has not answered for 1 minute."

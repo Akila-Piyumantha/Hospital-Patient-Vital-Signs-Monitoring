@@ -1,0 +1,13 @@
+# Member B: Spark Structured Streaming service goes here.
+#
+# Expected shape (see PROJECT_PLAN.md B2 / contract 4.7):
+#   services:
+#     spark-streaming:
+#       build: ../streaming            # Spark + Kafka connector + JDBC driver, versions pinned
+#       depends_on: { kafka-init: {condition: service_completed_successfully}, postgres: {condition: service_healthy} }
+#       environment: KAFKA_BOOTSTRAP_SERVERS=kafka:9092 ...
+#       ports: ["8003:8003"]           # Prometheus metrics; scraped as job "spark-streaming"
+#       volumes: ["../data:/app/data"] # Parquet lake + checkpoints under data/lake, data/checkpoints
+#
+# Prometheus already scrapes spark-streaming:8003/metrics (observability/prometheus.yml).
+services: {}
