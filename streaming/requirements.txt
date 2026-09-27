@@ -1,0 +1,6 @@
+# Runtime dependencies of the Spark streaming job (Member B). Versions pinned (plan risk: connector mismatch).
+pyspark==3.5.3
+confluent-kafka>=2.6,<3
+prometheus-client>=0.20,<1
+pydantic>=2.7,<3
+psycopg2-binary>=2.9.10,<3

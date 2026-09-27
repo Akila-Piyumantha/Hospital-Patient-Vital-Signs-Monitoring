@@ -44,30 +44,30 @@ Milestones: **M1 = D5** walking skeleton · **M2 = D8** both layers integrated �
 **Name:** ________
 
 ### D1–D5
-- [ ] B1 `common/scoring.py` with unit tests for every threshold boundary
-- [ ] B2 Spark container (connector versions pinned, JDBC driver, submit command in Compose)
-- [ ] B3 Ingest and validate: schema, casting, range checks, DLQ, dedupe by `event_id`
+- [ ] B1 `common/scoring.py` with unit tests for every threshold boundary — done, awaiting PR review
+- [ ] B2 Spark container (connector versions pinned, JDBC driver, submit command in Compose) — done (`streaming/Dockerfile`, `compose/spark.yml`), awaiting PR review
+- [ ] B3 Ingest and validate: schema, casting, range checks, DLQ, dedupe by `event_id` — done; live: input 21 255 = valid 20 633 + DLQ 419 + dropped 203
 - [ ] J1 Kickoff workshop attended, decisions confirmed
-- [ ] J2 Contracts signed off; review `sql/init.sql` streaming tables
+- [ ] J2 Contracts signed off; review `sql/init.sql` streaming tables — B's tables proposed in `sql/02_speed_layer.sql` (see docs/CHANGELOG.md), C to confirm
 - [ ] **M1 (D5)** skeleton demo
 
 ### D4–D8
-- [ ] B4 Enrichment: join with `patients`, MAP, pulse pressure, per-reading `news_score`
-- [ ] B5 Windowed aggregation (2 min / 30 s, 1 min watermark), trend slopes, sustained-abnormal counter
-- [ ] B6 `foreachBatch` sinks: idempotent Postgres upserts + Parquet by `sim_day`, checkpoints, kill/restart test
+- [ ] B4 Enrichment: join with `patients`, MAP, pulse pressure, per-reading `news_score` — done, awaiting PR review
+- [ ] B5 Windowed aggregation (2 min / 30 s, 1 min watermark), trend slopes, sustained-abnormal counter — done; hand-computed fixture test green
+- [ ] B6 `foreachBatch` sinks: idempotent Postgres upserts + Parquet by `sim_day`, checkpoints, kill/restart test — done; kill -9 mid-batch → replay, no duplicates (docs/speed_layer.md §4.2)
 - [ ] **M2 (D8)** both layers integrated
 
 ### D7–D11
-- [ ] B7 Alert engine: rules, severity, reason codes, cooldown, open/resolved lifecycle
-- [ ] B8 Lab feedback loop: stream-static join with `patient_lab_risk`, before/after evidence
-- [ ] B9 Streaming metrics via `StreamingQueryListener` + structured logs per micro-batch
-- [ ] B10 Unit tests + local-mode Spark integration test
+- [ ] B7 Alert engine: rules, severity, reason codes, cooldown, open/resolved lifecycle — done, awaiting PR review
+- [ ] B8 Lab feedback loop: stream-static join with `patient_lab_risk`, before/after evidence — done with a stand-in loader (`streaming/lab_risk_fixture.py`); re-check with C's DAG at M2
+- [ ] B9 Streaming metrics via `StreamingQueryListener` + structured logs per micro-batch — done; also commits offsets to group `spark-speed-layer` for ConsumerLagHigh
+- [ ] B10 Unit tests + local-mode Spark integration test — done; 91 tests green in Linux container, CI job `spark-tests` added
 
 ### D10–D14
-- [ ] B11 Performance/tuning notes
+- [ ] B11 Performance/tuning notes — measured, in docs/speed_layer.md §4
 - [ ] J5 Cross-review of a peer's module (viva prep)
 - [ ] J6 Soak run, freeze
-- [ ] Report: Lambda vs Kappa chapter (with A's and C's paragraphs), processing layer, storage design
+- [ ] Report: Lambda vs Kappa chapter (with A's and C's paragraphs), processing layer, storage design — drafts in docs/speed_layer.md §1-3; A and C paragraphs pending
 - [ ] J7/J8 Report assembly review, own demo segment, contribution statement
 
 ---
