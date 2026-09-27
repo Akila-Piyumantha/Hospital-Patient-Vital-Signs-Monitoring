@@ -1,13 +1,57 @@
-# Member B: Spark Structured Streaming service goes here.
-#
-# Expected shape (see PROJECT_PLAN.md B2 / contract 4.7):
-#   services:
-#     spark-streaming:
-#       build: ../streaming            # Spark + Kafka connector + JDBC driver, versions pinned
-#       depends_on: { kafka-init: {condition: service_completed_successfully}, postgres: {condition: service_healthy} }
-#       environment: KAFKA_BOOTSTRAP_SERVERS=kafka:9092 ...
-#       ports: ["8003:8003"]           # Prometheus metrics; scraped as job "spark-streaming"
-#       volumes: ["../data:/app/data"] # Parquet lake + checkpoints under data/lake, data/checkpoints
-#
-# Prometheus already scrapes spark-streaming:8003/metrics (observability/prometheus.yml).
-services: {}
+# Member B: Spark Structured Streaming speed layer (included by docker-compose.yml).
+# Paths are relative to this file. Prometheus scrapes spark-streaming:8003/metrics (job "spark-streaming").
+services:
+  spark-streaming:
+    build:
+      context: ..
+      dockerfile: streaming/Dockerfile
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      seed-patients:            # validation rejects readings of unknown patients
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      VITALS_TOPIC: ${VITALS_TOPIC:-vitals.raw}
+      DLQ_TOPIC: ${DLQ_TOPIC:-vitals.dlq}
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-hospital}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hospital}
+      POSTGRES_DB: ${POSTGRES_DB:-hospital}
+      SIM_DAY_SECONDS: ${SIM_DAY_SECONDS:-300}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SPARK_MASTER: ${SPARK_MASTER:-local[2]}
+      SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-1g}
+      SPARK_SHUFFLE_PARTITIONS: ${SPARK_SHUFFLE_PARTITIONS:-3}
+      STREAM_TRIGGER_INTERVAL: ${STREAM_TRIGGER_INTERVAL:-5 seconds}
+      STREAM_STARTING_OFFSETS: ${STREAM_STARTING_OFFSETS:-latest}
+      STREAM_WINDOW_DURATION: ${STREAM_WINDOW_DURATION:-2 minutes}
+      STREAM_WINDOW_SLIDE: ${STREAM_WINDOW_SLIDE:-30 seconds}
+      STREAM_WATERMARK: ${STREAM_WATERMARK:-1 minute}
+      STREAM_CONSUMER_GROUP: ${STREAM_CONSUMER_GROUP:-spark-speed-layer}
+      CHECKPOINT_DIR: /checkpoints
+      LAKE_DIR: /app/data/lake/vitals
+      LAKE_STAGING_DIR: /app/data/lake/_staging
+      METRICS_PORT: 8003
+    ports:
+      - "8003:8003"   # Prometheus metrics
+      - "4040:4040"   # Spark UI (Structured Streaming tab)
+    volumes:
+      - ../data:/app/data             # Parquet lake (contract 4.3: data/lake/vitals), read by the batch layer
+      # Checkpoints on a named volume: Spark-internal, and on Docker Desktop for Windows a bind mount
+      # made every micro-batch ~2x slower (measured 7.9 s -> 3.8 s). `docker compose down -v` resets it.
+      - spark-checkpoints:/checkpoints
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8003/metrics > /dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    mem_limit: 2g
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+volumes:
+  spark-checkpoints:

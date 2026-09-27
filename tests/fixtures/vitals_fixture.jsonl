@@ -1,0 +1,10 @@
+{"event_id": "e1", "patient_id": "P001", "heart_rate": 70, "spo2": 97, "systolic_bp": 120, "diastolic_bp": 80, "temperature": 36.5, "timestamp": "2026-03-01T10:00:05.000Z", "sim_day": 1}
+{"event_id": "e2", "patient_id": "P001", "heart_rate": 80, "spo2": 96, "systolic_bp": 110, "diastolic_bp": 70, "temperature": 37.0, "timestamp": "2026-03-01T10:00:35.000Z", "sim_day": 1}
+{"event_id": "e2", "patient_id": "P001", "heart_rate": 80, "spo2": 96, "systolic_bp": 110, "diastolic_bp": 70, "temperature": 37.0, "timestamp": "2026-03-01T10:00:35.000Z", "sim_day": 1}
+{"event_id": "e3", "patient_id": "P001", "heart_rate": 90, "spo2": 95, "systolic_bp": 100, "diastolic_bp": 60, "temperature": 37.5, "timestamp": "2026-03-01T10:01:05.000Z", "sim_day": 1}
+{"event_id": "e4", "patient_id": "P002", "heart_rate": 999, "spo2": 98, "systolic_bp": 125, "diastolic_bp": 80, "temperature": 36.9, "timestamp": "2026-03-01T10:00:10.000Z", "sim_day": 1}
+{"event_id": "e5", "patient_id": "P002", "heart_rate": 72, "spo2": null, "systolic_bp": 125, "diastolic_bp": 80, "temperature": 36.9, "timestamp": "2026-03-01T10:00:20.000Z", "sim_day": 1}
+this is not json
+{"event_id": "e6", "patient_id": "P999", "heart_rate": 72, "spo2": 98, "systolic_bp": 125, "diastolic_bp": 80, "temperature": 36.9, "timestamp": "2026-03-01T10:00:30.000Z", "sim_day": 1}
+{"event_id": "e7", "patient_id": "P002", "heart_rate": 135, "spo2": 98, "systolic_bp": 125, "diastolic_bp": 80, "temperature": 36.9, "timestamp": "2026-03-01T10:00:40.000Z", "sim_day": 1}
+{"event_id": "e8", "patient_id": "P002", "heart_rate": 72, "spo2": 98, "systolic_bp": 125, "diastolic_bp": 80, "temperature": 36.9, "timestamp": "2026-03-01T10:00:50.000Z", "sim_day": 1}

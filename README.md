@@ -150,6 +150,45 @@ risk can be validated against it. It is deliberately *not* in the database.
 Alerts appear in Prometheus (Alerts tab), the *Pipeline Health* dashboard, `docker compose logs alert-webhook`
 and `data/alerts/alerts.jsonl`.
 
+## Speed layer (Spark Structured Streaming)
+
+Service `spark-streaming` ([compose/spark.yml](compose/spark.yml), code in [streaming/](streaming/)).
+Two streaming queries read `vitals.raw`:
+
+| Query | What it does | Writes |
+|---|---|---|
+| `vitals_readings` | parse → validate (rejection reason) → join `patients` + `patient_lab_risk` → MAP, pulse pressure, NEWS, total score, tier → dedupe `event_id` | `vitals.dlq` + `dlq_events`, Parquet lake `data/lake/vitals/sim_day=N/`, `patient_status`, reading alerts |
+| `vitals_windows` | dedupe (1-min watermark) → 2-min windows sliding every 30 s on **event time**, update mode | `vitals_window`, trend slopes / flag, sustained counter, window alerts |
+
+Scoring rules shared with the batch layer live in [common/scoring.py](common/scoring.py).
+Metrics: http://localhost:8003/metrics · Spark UI (Structured Streaming tab): http://localhost:4040.
+
+```bash
+docker compose up -d --build spark-streaming      # also starts its dependencies
+docker compose logs -f spark-streaming | grep -E 'readings_batch_written|alert_opened|risk_tier_changed'
+docker compose exec postgres psql -U hospital -c \
+  "SELECT patient_id, risk_tier, news_score, lab_risk_points, trend_flag, last_reading_at FROM patient_status ORDER BY total_score DESC LIMIT 8"
+docker compose exec postgres psql -U hospital -c \
+  "SELECT opened_at, patient_id, reason_code, severity, resolved_at FROM alerts ORDER BY opened_at DESC LIMIT 10"
+docker compose exec postgres psql -U hospital -c "SELECT reason, count(*) FROM dlq_events GROUP BY 1"
+```
+
+**Lab feedback loop without Airflow** (stand-in for Member C's `compute_lab_risk`, until the DAG exists):
+`docker compose exec spark-streaming python -m streaming.lab_risk_fixture --day 2`. Within one trigger (5 s) the
+job logs `lab_risk_applied` / `risk_tier_changed` for patients with abnormal labs.
+
+**Restart / exactly-once check:** `docker compose restart spark-streaming`, then
+`SELECT patient_id, window_start, count(*) FROM vitals_window GROUP BY 1,2 HAVING count(*) > 1` (no rows) and
+`SELECT count(*), count(DISTINCT alert_id) FROM alerts` (equal). The query resumes from its checkpoint (named volume
+`spark-checkpoints`; `docker compose down -v` / `make reset` clears it).
+
+**Tests:** `pytest tests/common/test_scoring.py tests/streaming` - pure-Python tests always run; the Spark tests need
+`pip install -r streaming/requirements.txt` and Java 17 (the streaming/Parquet ones are skipped on Windows, which lacks
+`winutils.exe`; they run in CI job `spark-tests` or in the container:
+`docker compose run --rm --no-deps -v "$PWD/tests:/app/tests" -v "$PWD/simulators:/app/simulators" spark-streaming sh -c "pip install -q pytest && python -m pytest -q -p no:cacheprovider tests/streaming tests/common/test_scoring.py"`).
+
+Design, tuning notes and the report chapters: [docs/speed_layer.md](docs/speed_layer.md).
+
 ## Observability
 
 * **Structured logging** - one JSON object per line on stdout from every service:
