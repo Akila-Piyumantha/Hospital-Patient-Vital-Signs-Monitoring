@@ -43,6 +43,60 @@ jobs:
       - name: Scoring + speed-layer tests (incl. streaming integration test)
         run: pytest tests/common/test_scoring.py tests/streaming -v
 
+  # Member C: batch layer + API against a real Postgres, batch Spark job in local mode
+  batch-serving-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: hospital
+          POSTGRES_PASSWORD: hospital
+          POSTGRES_DB: hospital
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U hospital" --health-interval 5s --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_POSTGRES_HOST: localhost
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements*.txt
+            serving/requirements.txt
+            airflow/requirements.txt
+      - run: pip install -r requirements-dev.txt -r serving/requirements.txt -r airflow/requirements.txt
+      - name: Batch layer + API tests (Postgres, local-mode Spark)
+        run: pytest tests/batch tests/serving -v
+
+  # Member C: the DAG parses under the Airflow version of the image (official constraints)
+  dag-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Airflow 2.10.4 with constraints
+        run: |
+          pip install "apache-airflow==2.10.4" pytest prometheus-client \
+            --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.10.4/constraints-3.11.txt
+      - name: DAG import test
+        env:
+          AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+          SIM_DAY_SECONDS: "300"
+        run: |
+          airflow db migrate > /dev/null
+          pytest tests/airflow_dag -v
+
   compose-config:
     runs-on: ubuntu-latest
     steps:

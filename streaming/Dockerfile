@@ -26,6 +26,8 @@ RUN apt-get update \
 WORKDIR /app
 COPY streaming/requirements.txt streaming/requirements.txt
 # long timeout + retries: pyspark is ~317 MB and slow links time out with pip defaults
+# optional PyPI mirror for slow links: docker compose build --build-arg PIP_INDEX_URL=<mirror>/simple
+ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN pip install --default-timeout=300 --retries 10 -r streaming/requirements.txt
 
 RUN JARS="$(python -c 'import os, pyspark; print(os.path.join(os.path.dirname(pyspark.__file__), "jars"))')" \

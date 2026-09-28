@@ -1,0 +1,5 @@
+# Extra packages of the Airflow image (Member C). Airflow itself comes from the base image.
+# pyspark pinned to the speed layer's version (streaming/requirements.txt).
+pyspark==3.5.3
+prometheus-client>=0.20,<1
+psycopg2-binary>=2.9.10,<3

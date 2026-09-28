@@ -77,26 +77,26 @@ Milestones: **M1 = D5** walking skeleton · **M2 = D8** both layers integrated �
 **Name:** ________
 
 ### D1–D5
-- [ ] C1 `sql/init.sql`: all tables, keys, indexes, `pipeline_run_log` (B reviews)
-- [ ] C2 Airflow setup: JDK + pyspark image, LocalExecutor, mounts, env connections
-- [ ] C6 (part 1) FastAPI skeleton with `/api/ward/summary` and `/health`
+- [ ] C1 `sql/init.sql`: all tables, keys, indexes, `pipeline_run_log` (B reviews) — done: batch tables + `batch_vitals_daily`, `speed_batch_reconciliation`; B's `02_speed_layer.sql` confirmed unchanged (docs/CHANGELOG.md); awaiting PR review
+- [ ] C2 Airflow setup: JDK + pyspark image, LocalExecutor, mounts, env connections — done (`airflow/Dockerfile`, `compose/airflow.yml`, FileSensor connection via env); built and running; verified live
+- [ ] C6 (part 1) FastAPI skeleton with `/api/ward/summary` and `/health` — done (see C6 part 2)
 - [ ] J1 Kickoff workshop attended, decisions confirmed
 - [ ] J2 Contracts signed off
 - [ ] **M1 (D5)** skeleton demo
 
 ### D5–D10
-- [ ] C3 DAG `daily_lab_risk_report`: sensor → validate → load → lab risk → batch job → report → health check → archive, with retries, SLA, failure callback
-- [ ] C4 Batch Spark job: full previous-day recompute from Parquet, speed-vs-batch discrepancy metric
-- [ ] C5 Daily consolidated risk report (HTML + CSV + `patient_risk_report`, risk before vs after labs)
-- [ ] C6 (part 2) Remaining endpoints: patients, vitals, alerts, reports, `/metrics`, pagination, OpenAPI
-- [ ] C7 Failure and idempotency checks (replay a day, corrupt file, unknown patient)
+- [ ] C3 DAG `daily_lab_risk_report`: sensor → validate → load → lab risk → batch job → report → health check → archive, with retries, SLA, failure callback — done (`airflow/dags/`, logic in `batch/tasks.py`); live: days 1-6 green (scheduled + replays), missing-file run failed as designed and fired `LabFileMissing`
+- [ ] C4 Batch Spark job: full previous-day recompute from Parquet, speed-vs-batch discrepancy metric — done (`batch/daily_vitals_job.py`, window-level reconciliation → `speed_batch_discrepancy_ratio`); live: ~67 s/day, discrepancy 0.2-0.9 % per day
+- [ ] C5 Daily consolidated risk report (HTML + CSV + `patient_risk_report`, risk before vs after labs) — done (`batch/report.py`, sparklines, tier changes); retires B's `lab_risk_fixture.py`
+- [ ] C6 (part 2) Remaining endpoints: patients, vitals, alerts, reports, `/metrics`, pagination, OpenAPI — done (`serving/api/`, `compose/api.yml`); 12 API tests green against a test DB
+- [ ] C7 Failure and idempotency checks (replay a day, corrupt file, unknown patient) — automated tests + live replay and missing-file runs (docs/batch_serving.md §2.1); screenshots for the report pending
 - [ ] **M2 (D8)** both layers integrated
 
 ### D6–D14
-- [ ] C8 Tests: lab parsing, risk merge, API with test DB, DAG import
+- [ ] C8 Tests: lab parsing, risk merge, API with test DB, DAG import — done (`tests/batch`, `tests/serving`, `tests/airflow_dag`; CI jobs `batch-serving-tests`, `dag-import`)
 - [ ] J5 Cross-review of a peer's module (viva prep)
 - [ ] J6 Soak run, freeze
-- [ ] C9 Report: use case and requirements, serving layer, results with screenshots, limitations; consistency paragraph in the architecture chapter
+- [ ] C9 Report: use case and requirements, serving layer, results with screenshots, limitations; consistency paragraph in the architecture chapter — drafts in docs/batch_serving.md §4; results/screenshots need the soak run
 - [ ] J7/J8 Coordinate demo video, own demo segment, contribution statement
 
 ---

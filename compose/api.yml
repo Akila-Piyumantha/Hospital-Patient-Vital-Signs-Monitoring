@@ -1,9 +1,33 @@
-# Member C: FastAPI serving layer goes here.
-#
-# Expected shape (see PROJECT_PLAN.md C6):
-#   services:
-#     api:
-#       build: ../serving
-#       depends_on: { postgres: {condition: service_healthy} }
-#       ports: ["8000:8000"]           # /health, /metrics (scraped as job "api"), /docs
-services: {}
+# Member C: FastAPI serving layer (included by docker-compose.yml). Paths are relative to this file.
+#   http://localhost:8000/docs      interactive OpenAPI docs
+#   http://localhost:8000/metrics   scraped by Prometheus as job "api" (alert ApiDown)
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: serving/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-hospital}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hospital}
+      POSTGRES_DB: ${POSTGRES_DB:-hospital}
+      HEALTH_MAX_DATA_AGE_SECONDS: ${HEALTH_MAX_DATA_AGE_SECONDS:-60}
+      STREAM_WINDOW_DURATION: ${STREAM_WINDOW_DURATION:-2 minutes}
+      REPORTS_DIR: /app/data/reports
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../data:/app/data:ro   # data/reports: HTML reports written by the Airflow DAG
+    healthcheck:
+      # liveness only: /health returns 503 on stale data, which is an alert, not a restart reason
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    mem_limit: 256m
+    restart: unless-stopped

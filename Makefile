@@ -3,7 +3,7 @@
 COMPOSE ?= docker compose
 PY      ?= python
 
-.PHONY: help up down reset logs ps test test-alerts lint format e2e dashboards
+.PHONY: help up down reset logs ps test test-alerts lint format e2e dashboards replay-day dag-runs
 
 help:
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/ -/'
@@ -44,3 +44,9 @@ e2e: ## smoke test against the running stack (see scripts/e2e_smoke.py)
 
 dashboards: ## regenerate Grafana dashboard JSON
 	$(PY) observability/grafana/build_dashboards.py
+
+replay-day: ## re-run the batch DAG for one simulated day, e.g. make replay-day DAY=3 (idempotent)
+	$(COMPOSE) exec airflow-scheduler airflow dags trigger daily_lab_risk_report -c '{"sim_day": $(DAY)}'
+
+dag-runs: ## last runs of the batch DAG
+	$(COMPOSE) exec airflow-scheduler airflow dags list-runs -d daily_lab_risk_report -o table

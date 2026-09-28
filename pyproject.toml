@@ -9,3 +9,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+# the repo's airflow/ folder (image + DAGs) would otherwise make `airflow` look first-party
+known-third-party = ["airflow"]

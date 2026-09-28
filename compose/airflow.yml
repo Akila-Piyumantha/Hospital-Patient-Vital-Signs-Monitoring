@@ -1,9 +1,125 @@
-# Member C: Airflow (LocalExecutor) goes here.
+# Member C: Airflow (LocalExecutor) - the batch layer (included by docker-compose.yml).
+# Paths are relative to this file.
 #
-# Expected shape (see PROJECT_PLAN.md C2):
-#   - metadata DB: database "airflow" already exists in the shared Postgres (sql/00_create_databases.sql)
-#   - mount ../airflow/dags, ../batch, ../common and ../data (landing zone: data/landing/labs)
-#   - batch jobs push their metrics to the Pushgateway at pushgateway:9091
-#     (airflow_dag_last_success_timestamp, lab_files_ingested_total, lab_file_missing_total,
-#      speed_batch_discrepancy_ratio) - Prometheus scrapes it (job "pushgateway").
-services: {}
+#   UI:          http://localhost:8080  (admin / admin, see AIRFLOW_USER / AIRFLOW_PASSWORD)
+#   metadata DB: database "airflow" in the shared Postgres (sql/00_create_databases.sql)
+#   metrics:     pushed to pushgateway:9091 (airflow_dag_last_success_timestamp, lab_files_*,
+#                lab_file_missing_total, speed_batch_discrepancy_ratio) - job "pushgateway"
+#
+# LocalExecutor runs every task as a subprocess of the scheduler, so the batch Spark job
+# (local mode) runs inside airflow-scheduler: that is why it gets the JDK and the memory.
+x-airflow: &airflow
+  build:
+    context: ..
+    dockerfile: airflow/Dockerfile
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-hospital}:${POSTGRES_PASSWORD:-hospital}@postgres:5432/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__PARALLELISM: "4"
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: utc
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-hospital-demo-only}
+    AIRFLOW__WEBSERVER__WORKERS: "2"
+    AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: UTC
+    AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "30"
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "30"
+    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+    # FileSensor connection: base folder of the landing zone
+    AIRFLOW_CONN_FS_LANDING: '{"conn_type": "fs", "extra": {"path": "/opt/airflow/data/landing/labs"}}'
+    PYTHONPATH: /opt/airflow
+    # batch layer settings (batch/settings.py)
+    SIM_DAY_SECONDS: ${SIM_DAY_SECONDS:-300}
+    SIM_EPOCH: ${SIM_EPOCH:-}
+    SIM_EPOCH_FILE: /opt/airflow/data/state/sim_epoch
+    STATE_DIR: /opt/airflow/data/state
+    LANDING_DIR: /opt/airflow/data/landing/labs
+    LAKE_DIR: /opt/airflow/data/lake/vitals
+    REPORTS_DIR: /opt/airflow/data/reports
+    POSTGRES_HOST: postgres
+    POSTGRES_USER: ${POSTGRES_USER:-hospital}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hospital}
+    POSTGRES_DB: ${POSTGRES_DB:-hospital}
+    PUSHGATEWAY_URL: pushgateway:9091
+    STREAM_WINDOW_DURATION: ${STREAM_WINDOW_DURATION:-2 minutes}
+    STREAM_WINDOW_SLIDE: ${STREAM_WINDOW_SLIDE:-30 seconds}
+    BATCH_SETTLE_SECONDS: ${BATCH_SETTLE_SECONDS:-75}
+    BATCH_SPARK_MASTER: ${BATCH_SPARK_MASTER:-local[2]}
+    BATCH_SPARK_DRIVER_MEMORY: ${BATCH_SPARK_DRIVER_MEMORY:-768m}
+    LAB_SENSOR_TIMEOUT_SECONDS: ${LAB_SENSOR_TIMEOUT_SECONDS:-}
+    LAB_SENSOR_POKE_SECONDS: ${LAB_SENSOR_POKE_SECONDS:-10}
+    DISCREPANCY_ALERT_RATIO: ${DISCREPANCY_ALERT_RATIO:-0.10}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  volumes:
+    - ../airflow/dags:/opt/airflow/dags
+    - ../batch:/opt/airflow/batch
+    - ../common:/opt/airflow/common
+    - ../sql:/opt/airflow/sql:ro
+    - ../data:/opt/airflow/data            # landing zone, lake (read), reports, state
+    - airflow-logs:/opt/airflow/logs
+
+services:
+  airflow-init:
+    <<: *airflow
+    # Runs as root once: the simulators (root) create data/landing and data/state, but the Airflow
+    # tasks (AIRFLOW_UID) must move lab files there and keep their metric state - so the shared
+    # folders are created up front and handed to AIRFLOW_UID (the official Airflow Compose pattern).
+    user: "0:0"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        cd /opt/airflow/data
+        mkdir -p landing/labs/processed landing/labs/quarantine state reports
+        chown -R "$${AIRFLOW_UID}:0" landing state reports
+        chmod -R g+rwX landing state reports
+        exec /entrypoint airflow version
+    environment:
+      <<: *airflow-env
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_USER:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_PASSWORD:-admin}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow
+    command: webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8080/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
+    mem_limit: 1g
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      pushgateway:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 20s
+      retries: 5
+      start_period: 60s
+    mem_limit: 2560m
+    restart: unless-stopped
+
+volumes:
+  airflow-logs:

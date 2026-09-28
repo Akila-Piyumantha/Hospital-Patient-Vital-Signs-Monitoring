@@ -10,8 +10,8 @@ results to answer
 Full design, task split and contracts: [PROJECT_PLAN.md](PROJECT_PLAN.md) · progress: [TASK_BOARD.md](TASK_BOARD.md) ·
 contract changes: [docs/CHANGELOG.md](docs/CHANGELOG.md)
 
-> **Status:** platform, ingestion and observability (Member A) are implemented. Spark speed layer (B) and
-> Airflow / API / reports (C) plug in through `compose/spark.yml`, `compose/airflow.yml`, `compose/api.yml`.
+> **Status:** platform, ingestion and observability (A), Spark speed layer (B) and Airflow batch layer / API /
+> daily report (C) are implemented; they plug in through `compose/spark.yml`, `compose/airflow.yml`, `compose/api.yml`.
 
 ## Architecture
 
@@ -59,6 +59,8 @@ docker compose logs -f vitals-simulator lab-generator     # JSON logs
 | Kafka (from the host) | `localhost:29092` |
 | Postgres | `localhost:5432` (user/password/db: `hospital`) |
 | Pushgateway (batch job metrics) | http://localhost:9091 |
+| Airflow (admin / admin) | http://localhost:8080 |
+| Serving API (OpenAPI docs) | http://localhost:8000/docs |
 
 Stop with `docker compose down`; wipe everything (volumes + generated data, restarting simulated time at
 day 1) with `make reset` or:
@@ -189,6 +191,50 @@ job logs `lab_risk_applied` / `risk_tier_changed` for patients with abnormal lab
 
 Design, tuning notes and the report chapters: [docs/speed_layer.md](docs/speed_layer.md).
 
+## Batch layer (Airflow) and serving API
+
+Services `airflow-init`, `airflow-webserver`, `airflow-scheduler` ([compose/airflow.yml](compose/airflow.yml)) and
+`api` ([compose/api.yml](compose/api.yml)); code in [batch/](batch/), [airflow/dags/](airflow/dags/),
+[serving/api/](serving/api/); schema [sql/init.sql](sql/init.sql).
+
+| What | URL |
+|---|---|
+| Airflow UI (graph view, run history; admin / admin) | http://localhost:8080 |
+| API docs (OpenAPI, try it out) | http://localhost:8000/docs |
+| Ward summary | http://localhost:8000/api/ward/summary |
+| Latest daily risk report (JSON / HTML) | http://localhost:8000/api/reports/risk/latest · `/api/reports/risk/<day>/html` |
+
+DAG `daily_lab_risk_report` runs once per simulated day: `wait_for_lab_file` (FileSensor) → `validate_lab_file`
+(bad rows / files → `data/landing/labs/quarantine/`) → `load_lab_results` → `compute_lab_risk` (→ `patient_lab_risk`,
+picked up by the speed layer within one trigger) → `batch_vitals_job` (Spark recompute of the previous day from the
+lake + speed-vs-batch reconciliation) → `build_risk_report` (`patient_risk_report` + `data/reports/risk_report_day_NNN.{html,csv}`)
+→ `data_quality_and_health_check` → `archive_file`. Metrics go to the Pushgateway (`airflow_dag_last_success_timestamp`,
+`lab_file_missing_total`, `speed_batch_discrepancy_ratio`, …).
+
+```bash
+docker compose up -d --build airflow-scheduler airflow-webserver api     # plus their dependencies
+docker compose logs -f airflow-scheduler | grep '"service": "airflow-batch"'   # JSON events of the DAG tasks
+make replay-day DAY=3        # re-run one day (idempotent); = airflow dags trigger ... -c '{"sim_day": 3}'
+make dag-runs                # run history
+curl -s localhost:8000/api/ward/summary | python -m json.tool
+curl -s "localhost:8000/api/patients?risk_tier=HIGH"
+curl -s "localhost:8000/api/alerts?status=open&severity=CRITICAL"
+docker compose exec postgres psql -U hospital -c \
+  "SELECT rank, patient_id, risk_before_labs, risk_after_labs, lab_summary FROM patient_risk_report
+   WHERE sim_day = (SELECT max(sim_day) FROM patient_risk_report) ORDER BY rank LIMIT 8"
+docker compose exec postgres psql -U hospital -c "SELECT * FROM speed_batch_reconciliation ORDER BY sim_day"
+```
+
+Day numbering: the run for day N loads `labs_day_N.csv` (labs collected on day N-1), writes lab risk `as_of_sim_day = N`,
+recomputes the vitals of day N-1 and produces the report for day N. Failure handling (replay, corrupt / bad-schema /
+missing file), the reconciliation formula and the report chapter drafts: [docs/batch_serving.md](docs/batch_serving.md).
+
+**Tests:** `pytest tests/batch tests/serving` - pure-Python tests always run; the database tests use a throw-away
+database on the Postgres at `localhost:5432` (e.g. the Compose one; override with `TEST_POSTGRES_HOST`/`_PORT`/`_USER`/`_PASSWORD`)
+and are skipped when none is reachable; API tests need `pip install -r serving/requirements.txt`; the Spark test needs
+`pip install -r airflow/requirements.txt` and Java 17. The DAG import test (`tests/airflow_dag`) needs Airflow and runs in
+CI job `dag-import`.
+
 ## Observability
 
 * **Structured logging** - one JSON object per line on stdout from every service:
@@ -215,7 +261,11 @@ Design, tuning notes and the report chapters: [docs/speed_layer.md](docs/speed_l
 common/            config, simulated clock, JSON logging, data-contract models   (A)
 simulators/        vitals producer, lab generator, patient model, faults, seeding (A)
 kafka/             topic creation script                                          (A)
-sql/               00_ airflow DB · 01_ patients table · init.sql (C: rest of schema)
+sql/               00_ airflow DB · 01_ patients table · 02_ speed-layer tables (B) · init.sql (C: batch tables)
+streaming/         Spark Structured Streaming job                                  (B)
+batch/             lab pipeline, batch Spark job, daily report, DAG task callables (C)
+airflow/           Airflow image + dags/daily_lab_risk_report.py                  (C)
+serving/           FastAPI serving layer                                          (C)
 compose/           spark.yml (B) · airflow.yml (C) · api.yml (C), included by docker-compose.yml
 observability/     prometheus, alert rules, alertmanager, webhook, Grafana        (A)
 scripts/           e2e_smoke.py
@@ -253,4 +303,9 @@ Team conventions (branches, reviews, contract changes): see PROJECT_PLAN.md §9.
 | Simulators keep waiting for Kafka | `docker compose logs kafka kafka-init`; the broker needs ≈ 20-30 s on first start |
 | Sim day counter is huge after a break | The epoch file is old: `make reset` (or delete `data/state/sim_epoch`) |
 | Grafana ward panels show "relation does not exist" | Expected until B/C create their tables (`sql/init.sql`) |
-| Prometheus targets `spark-streaming` / `api` are DOWN | Expected until B/C add their services |
+| Prometheus targets `spark-streaming` / `api` are DOWN | `docker compose ps spark-streaming api`; the API needs Postgres healthy |
+| DAG run failed at `wait_for_lab_file` | No lab file for that day (by design with `LAB_FORCE_MISSING_DAYS`); otherwise check `docker compose logs lab-generator` |
+| Airflow tasks cannot move files in `data/` (Linux host) | Set `AIRFLOW_UID=$(id -u)` in `.env`, or `sudo chmod -R a+rwX data` |
+| Image builds crawl / time out in `pip install` | PyPI's CDN can be very slow on some links: `docker compose build --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` (any PyPI mirror) |
+| Host tools reach the wrong Postgres (`password authentication failed` on `localhost:5432`) | A PostgreSQL installed on Windows owns port 5432, hiding the container's port. Stop that service, or query inside the stack: `docker compose exec postgres psql -U hospital` |
+| `/health` returns 503 but the API runs | Stale data (> 60 s) - the speed layer or simulator is down; `/health/live` is the liveness probe |
