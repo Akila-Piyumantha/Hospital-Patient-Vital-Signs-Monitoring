@@ -36,6 +36,14 @@ difference between its exact per-day aggregates and the speed layer's windowed o
 non-zero, because the speed layer deliberately trades completeness for latency: readings later than the 1-minute
 watermark are left out of the windows (they are still in the lake). The metric makes this trade-off visible instead of hiding it.
 
+**Measured on the full stack.** During the 43-day soak run the batch job rebuilt the speed layer's 2-minute windows
+from the lake for 41 simulated days (107 615 readings) and compared them window by window: the speed layer counted
+on average **0.54 %** fewer readings (min 0.13 %, max 0.99 %), never missed a window, and its average heart rate per
+window differed by at most 0.034 bpm; the lake held no duplicates ([batch_serving.md §4](batch_serving.md)). The whole
+difference is late data beyond the watermark — the trade we chose: the real-time view gives up under 1 % of
+completeness for seconds-level alerts, and the batch view restores it, an order of magnitude below the 10 %
+`SpeedBatchDiscrepancy` alert threshold.
+
 *[A: paragraph on ingestion and replay — Kafka retention, partitions keyed by patient, why the lake and not the log is the replay source.]*
 
 **Serving and consistency: how the two views are merged (C).** The speed and batch views meet in one
@@ -186,7 +194,7 @@ inside WSL2 (plan §9) bind mounts are native and the difference disappears; (3)
 | Lake duplicates | 20 577 rows = 20 577 distinct `event_id` ✔ |
 | Speed vs. lake for the same window | per-window `n_readings` equal to the lake's distinct ids ✔ |
 | **Kill -9 during batch 165** (offsets written, commit missing) → restart | batch 165 replayed first (same id), still exactly 1 lake file for it; 0 duplicate windows; 170 alerts = 170 distinct ids; 0 double-open alerts; 413 DLQ rows = 413 distinct offsets ✔ |
-| Lab feedback loop (B8) | lab file of day 9 loaded → picked up **10 s later without restart**; occult patients P005 (NEWS 0 + 4 lab points) and P012 LOW → MEDIUM; P008, P014 LOW → MEDIUM |
+| Lab feedback loop (B8) | lab file of day 9 loaded (stand-in loader, before the DAG existed) → picked up **10 s later without restart**; occult patients P005 (NEWS 0 + 4 lab points) and P012 LOW → MEDIUM; P008, P014 LOW → MEDIUM. Re-confirmed with C's DAG on the full stack: `lab_as_of_sim_day = 4` for all patients seconds after the day-4 run, P012 LOW → MEDIUM |
 | Ground truth (simulator's hidden story) | deteriorating P001/P004/P008/P009: 24.5 alerts per patient, each got SUSTAINED_ABNORMAL + TOTAL_SCORE_HIGH + WORSENING_TREND; stable patients: 9.2 (mostly single-vital alerts on the simulator's 1 % random spikes) |
 | Consumer lag visible to kafka-exporter | group `spark-speed-layer` committed on all 3 partitions, lag 9–25 messages ✔ |
 
