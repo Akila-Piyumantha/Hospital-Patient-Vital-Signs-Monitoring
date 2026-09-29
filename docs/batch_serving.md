@@ -103,6 +103,9 @@ exactly the rows with `tier_change = UP` and a low NEWS.
 * Memory (steady state): spark-streaming 1.6 GiB, airflow-webserver 0.8 GiB, airflow-scheduler 0.5 GiB
   (peaks during the batch Spark job), kafka 0.4 GiB.
 
+Fault injections repeated live on 2026-09-29 (replay of day 3, corrupt file, bad schema, missing file),
+with screenshots: see §4.3.
+
 Bugs found by the live run and fixed: (1) the first scheduled run after start-up resolved **day 0**
 (its data interval ended before the simulators created the sim epoch) - days are now clamped to ≥ 1;
 (2) `archive_file` failed with `Permission denied` - `data/landing` and `data/state` were created by the
@@ -129,65 +132,188 @@ Every request is logged as JSON (`stage="serving"`, route, status, duration). Po
 small thread-safe pool of read-only transactions with a 5 s statement timeout; a DB outage turns into
 `503 {"detail": "database unavailable"}` instead of a stack trace.
 
-## 4. Report chapter drafts (C9)
+## 4. Report chapters (C9)
+
+Final text for Member C's report sections. Figures refer to [docs/screenshots/](screenshots). The
+consistency paragraph for the Lambda chapter lives in [speed_layer.md §1](speed_layer.md#1-architecture-decision-lambda-not-kappa)
+next to B's and A's text; a copy is in §4.5.
 
 ### 4.1 Use case and interpreted requirements
 
-The ward needs to know *which patients show concerning vital-sign trends right now* and *how
-yesterday's lab results change the risk picture going forward*. We read this as five requirements:
+A hospital ward monitors 20 patients with bedside devices that report heart rate, SpO₂, blood pressure
+and temperature every few seconds. Once a day, the laboratory delivers a file with the previous day's
+blood results. Clinicians ask two questions of different kinds: *which patients show concerning
+vital-sign trends right now*, and *how do yesterday's lab results change the risk picture going
+forward*. The first calls for seconds-level latency over a continuous stream. The second depends on a
+file that arrives once a day and may be late, missing, corrupt or corrected. We interpreted the brief as
+five functional requirements:
 
-1. **Seconds-level awareness** - per-patient risk and alerts from continuous bedside vitals
-   (HR, SpO₂, BP, temperature) within one trigger interval (5 s) of a reading.
-2. **Trends, not just thresholds** - deterioration shows as rising HR / falling SpO₂ and SBP over
-   minutes, so windowed aggregation and slopes are required, not only per-reading checks.
-3. **Labs arrive once a day and can be late, missing, corrupt or corrected** - they need validation,
-   quarantine and idempotent reloads, not a streaming path.
-4. **Labs must feed back into the real-time view** - a patient with normal vitals but a high lactate is
-   at risk; the lab points must raise the live tier (lab → speed-layer feedback loop).
-5. **A trustworthy daily consolidated report** - recomputed from immutable data, ranked, explaining
-   the change caused by the labs, and reproducible for any past day.
+| # | Requirement | Where it is met |
+|---|---|---|
+| R1 | **Seconds-level awareness:** per-patient risk tier and alerts within one trigger interval (5 s) of a reading | Speed layer: Spark Structured Streaming → `patient_status`, `alerts` |
+| R2 | **Trends, not only thresholds:** deterioration shows as rising HR, falling SpO₂ or falling SBP over minutes | 2-min sliding windows, slopes and a sustained-abnormal counter (`vitals_window`) |
+| R3 | **Robust daily lab ingestion:** late, missing, corrupt or repeated files must not corrupt the data | Airflow DAG: sensor, validation, quarantine, idempotent day reload |
+| R4 | **Labs feed back into the live view:** a patient with normal vitals but a high lactate is at risk | `patient_lab_risk`, re-read by the streaming job every micro-batch |
+| R5 | **A trustworthy daily consolidated report:** recomputed from immutable data, ranked, explaining what the labs changed, reproducible for any past day | Batch Spark job over the Parquet lake → `patient_risk_report` + HTML/CSV |
 
-Non-functional: runs on one laptop with Docker Compose; observable (logs, metrics, alerts); every
-component replay-safe. Simplifications: 20 synthetic patients, 1 sim day = 5 min, simplified NEWS2
-(not clinically validated).
+Non-functional requirements: the system runs on one laptop with Docker Compose; it is observable
+(structured logs, Prometheus metrics, alert rules, dashboards); and every component is safe to replay.
+Simplifications, stated up front: synthetic patients from a seeded simulator; one simulated day = 5
+real minutes, so clinical time windows are scaled down; and a simplified NEWS2 score without
+respiration rate or consciousness level, which is not clinically validated.
 
 ### 4.2 Serving layer
 
-The serving layer is where the Lambda views meet. The speed layer continuously upserts small,
-query-ready tables (`patient_status`, `vitals_window`, `alerts`); the batch layer writes daily tables
-(`patient_lab_risk`, `patient_risk_report`, `batch_vitals_daily`, `speed_batch_reconciliation`). One
-PostgreSQL instance hosts both, which keeps the merge a SQL join instead of a separate merge service -
-appropriate at 20 patients (a few thousand rows a day) and it gives Grafana and the API the same
-source. The API is read-only, paginated, documented by OpenAPI and exposes latency histograms and
-freshness gauges; `/health` encodes the operational rule "data older than 60 s is an incident".
+The serving layer is where the two Lambda views meet. The speed layer continuously upserts small,
+query-ready tables: `patient_status` (one row per patient), `vitals_window` and `alerts`. The batch layer
+writes daily tables: `lab_results`, `patient_lab_risk`, `patient_risk_report`, `batch_vitals_daily` and
+`speed_batch_reconciliation`. Both sets live in one PostgreSQL database, so merging them is a SQL join
+rather than a separate merge service. At 20 patients (a few thousand rows a day) that is the simplest
+correct choice, and it gives Grafana and the API the same source of truth.
 
-### 4.3 Consistency paragraph for the Lambda chapter (serving / merging the views)
+The read API is a FastAPI application (`serving/api/`) with 13 read-only endpoints in five groups
+(Fig. C-1, §3 lists them):
 
-The two layers are merged at two points. (1) **Lab risk into the speed view**: the batch layer writes
-`patient_lab_risk` keyed by lab day; the streaming job re-reads the newest row per patient every
-micro-batch, so the live tier includes yesterday's labs seconds after the DAG commits - an eventually
-consistent merge with a bounded lag of one trigger. (2) **Daily report from the batch view**: the report
-is computed from the immutable lake, not from the speed tables, so late or duplicated readings that the
-watermark-bound speed layer dropped or double-processed are handled correctly. The price of Lambda is
-two code paths; we contain it with one scoring module (`common/scoring.py`) used by both and we
-*measure* the remaining disagreement every day (`speed_batch_discrepancy_ratio`), which turns the
-consistency argument into a number we can show.
+* **ward:** `/api/ward/summary` combines both layers in one response. It returns tier counts, open
+  alerts by severity and average vitals from the speed tables, together with the latest report day,
+  the latest lab day, the last DAG success and the last speed-vs-batch discrepancy from the batch
+  tables (Fig. C-2).
+* **patients:** a paginated list sorted by risk, plus a detail view. The detail joins the live status
+  with the newest lab risk (Fig. C-3), so a clinician sees the vital-sign score and the lab points that
+  make up the total.
+* **alerts** and **pipeline runs:** filterable and paginated (`{items, total, limit, offset}`).
+* **reports:** the daily risk report as JSON and as rendered HTML for any past day.
+* **ops:** `/health` encodes the operational rule "data older than 60 s is an incident" and returns 503
+  when it is broken. `/health/live` is the Docker liveness probe, and `/metrics` exposes the request
+  latency histogram, data freshness, patients per tier and open alerts per severity.
 
-### 4.4 Results (to fill from the soak run)
+Design choices: the API holds a small pool of read-only transactions with a 5 s statement timeout, so a
+slow query cannot pin a connection. A database outage returns `503 database unavailable` instead of a
+stack trace. Every request is logged as one JSON line with route, status and duration. The OpenAPI
+document is generated from the pydantic response models, so documentation and code cannot drift apart.
 
-Screenshots to capture: Airflow graph view of a green run and of a sensor timeout; `/docs`;
-`/api/ward/summary`; a patient whose `risk_after_labs` is above `risk_before_labs` in the HTML
-report; Grafana ward dashboard with the report panel; `speed_batch_discrepancy_ratio` over 6+ days.
+### 4.3 Results
 
-### 4.5 Limitations and production-scale changes
+All figures come from the full stack (every service of Members A, B and C) on one laptop with Docker
+Desktop. **Soak run:** 2026-09-28, 15:07–18:45 UTC, about 3 h 40 min or 43 simulated days, with no
+manual intervention apart from the planned fault injections. **Fault runs:** 2026-09-29 on the same
+data volumes.
 
-* Report vitals score = NEWS of end-of-day averages: smooths short spikes (peak NEWS is shown next to
-  it). Day-level trend thresholds (HR +10, SpO₂ −3, SBP −15) are illustrative.
-* A scheduled run targets the sim day of its `data_interval_end` (exactly one day apart, so a late start
-  cannot skip a day); with `catchup=False`, days missed while Airflow itself was down are not re-run
-  automatically - `make replay-day DAY=N` does it. A production DAG would enable catch-up.
-* Batch Spark runs in local mode inside the Airflow scheduler (LocalExecutor) - fine for a day of 3 000
-  readings; at hospital scale it would be submitted to a cluster (SparkSubmitOperator / KubernetesPod),
-  with the lake on S3 + Iceberg/Delta and partition overwrite instead of delete + insert.
-* One Postgres for serving and Airflow metadata; production would separate them, add read replicas and
-  put the API behind authentication, audit logging and role-based access (PHI).
+**Batch layer throughput and reliability.** Every simulated day except one ended with a successful DAG run. The exception
+was day 7, the planned missing-file day, which failed as designed (see C7 below). Days 1 and 2 first
+failed in `archive_file` because of a folder-permission bug, which was then fixed; their replays
+succeeded (§2.1). Every lab file that arrived was validated, loaded, scored, reported and archived
+(42 files, 5 077 lab rows, 840 report rows). Task durations from
+`pipeline_run_log`:
+
+| Task | Runs | Mean | Max |
+|---|---|---|---|
+| `validate_lab_file`, `load_lab_results`, `compute_lab_risk`, `build_risk_report`, `archive_file` | 42–45 each | 0.2–0.3 s | 1.8 s |
+| `batch_vitals_job` (Spark, local mode, including JVM start-up) | 42 | 85 s | 295 s |
+
+The batch Spark job dominates. It stayed well inside the 5-minute simulated day, and its maximum
+coincided with the speed layer's peak load (Fig. C-6).
+
+**Speed vs batch consistency (the Lambda evidence).** For each of 41 vitals days the batch job rebuilt
+the speed layer's 2-minute windows from the lake and compared them (Fig. C-7):
+
+| Metric (41 days) | Value |
+|---|---|
+| Readings in the lake | 107 615 |
+| Discrepancy ratio Σ\|n_batch − n_speed\| / Σn_batch | mean **0.54 %**, min 0.13 %, max 0.99 % |
+| Windows the speed layer never wrote | **0** |
+| Mean \|avg HR batch − avg HR speed\| per window | ≤ 0.034 bpm |
+| Duplicate readings in the lake | 0 |
+
+The speed layer always counted slightly fewer readings than the batch layer. These are readings that
+arrived later than the 1-minute watermark: the lake kept them, but the streaming windows had already
+closed. The numbers show the trade-off Lambda makes explicit. The real-time view gives up well under
+1 % of completeness for seconds-level latency, and the batch view restores it. The ratio stayed an
+order of magnitude below the 10 % alert threshold (`SpeedBatchDiscrepancy`) throughout.
+
+**Labs change the risk picture.** Across 42 daily reports (840 patient-days), the labs moved the
+risk tier of a patient 94 times: 50 up, 44 down. The report highlights these rows. Example (Fig. C-4,
+day 42): P007 had an end-of-day NEWS of 0, so on vital signs alone they were LOW risk. The day-42 lab
+file flagged creatinine and potassium high (0 → 3 lab points), which moved P007 to MEDIUM. This is
+the "occult" patient the batch layer exists to catch. The same lab points reach the live view: after
+each DAG run every `patient_status` row carries the new `lab_as_of_sim_day`, and the Grafana ward
+panel shows lab points next to the live NEWS (Fig. C-5).
+
+**Serving.** The API answered every endpoint with live data throughout. In Prometheus its p95 latency
+was mostly below 50 ms, with one spike of about 450 ms while the batch Spark job and the streaming job
+peaked at the same time (Fig. C-6, "API latency p95"). During the soak run the speed layer opened 905
+alerts (45 critical, 755 high, 105 medium). All of them were later resolved; none was left open.
+
+**Failure handling (C7).** Each case was run live on 2026-09-29:
+
+| Case | Evidence | Outcome |
+|---|---|---|
+| Replay of day 3 | Fig. C-8, C-9 | `airflow dags trigger -c '{"sim_day": 3}'` → all 9 tasks green. All five derived tables were rewritten (new timestamps) with **identical row counts and content hashes**, so there were no duplicates. |
+| Corrupt rows + unknown patient (day 176) | Fig. C-10 | 5 defective rows (bad reference range, `N/A` value, unknown patient `P999`, empty timestamp, duplicate) went to `quarantine/labs_day_176.rejected.csv` with a reason each. 117 of 122 rows loaded, the run succeeded, `lab_rows_quarantined_total` = 5, and `P999` does not appear in `lab_results` or `patient_lab_risk`. |
+| Bad schema (day 177) | Fig. C-11 | The header lacks `test_type`, so the whole file went to `quarantine/` with `missing_columns:test_type` in its `.reason.txt`. Load and lab risk were `skipped`, and 0 rows were written. The day-176 lab risk stayed in force in both `patient_lab_risk` and the live `patient_status`. The report was still built, the health check warned (`lab_file: quarantined`), and `lab_files_quarantined_total` = 1. |
+| Missing file (day 178) | Fig. C-12, C-13, C-14 | The lab generator logged `lab_file_not_dropped`. After 247 s the `wait_for_lab_file` sensor raised `AirflowSensorTimeout` (limit 240 s), and its failure callback raised `lab_file_missing_total` from 1 to 2 (day 7 of the soak run was the first). `LabFileMissing` was firing in Prometheus 13 s later and reached `data/alerts/alerts.jsonl` via Alertmanager 7 s after that. Downstream tasks were `upstream_failed`, and the next day's run was green. |
+
+**Figures** (`docs/screenshots/`):
+
+| Fig. | File | Shows |
+|---|---|---|
+| C-1 | `c9_api_docs.png` | OpenAPI documentation of the serving API |
+| C-2 | `c9_api_ward_summary.png` | `/api/ward/summary`: speed and batch views in one response |
+| C-3 | `c9_api_patient_P007.png` | Patient detail: live status + newest lab risk |
+| C-4 | `c9_report_day042.png` | Daily consolidated risk report, day 42, with the P007 tier change highlighted |
+| C-5 | `c9_grafana_ward_live.png` | Grafana ward live view (live tier, NEWS, lab points) |
+| C-6 | `c9_grafana_pipeline_soak.png` | Pipeline-health dashboard over the soak run (times in IST, UTC+5:30) |
+| C-7 | `c9_discrepancy_soak.png` | `speed_batch_discrepancy_ratio` per day over the soak run |
+| C-8 | `c7_replay_airflow_graph.png` | Airflow graph of the day-3 replay run, all tasks successful |
+| C-9 | `c7_replay_idempotency.png` | Day-3 tables before and after the replay |
+| C-10 | `c7_corrupt_file_unknown_patient.png` | Row-level quarantine and the unknown patient |
+| C-11 | `c7_bad_schema_file.png` | Whole-file quarantine of a file with a missing column |
+| C-12 | `c7_missing_file_airflow.png` | Sensor timeout of the missing-file run in the Airflow grid |
+| C-13 | `c7_missing_file_alert.png` | `LabFileMissing` firing in Prometheus |
+| C-14 | `c7_missing_file_evidence.png` | End-to-end chain: generator log → metric → Prometheus → Alertmanager webhook |
+
+### 4.4 Limitations and production-scale changes
+
+* **Scoring is simplified.** The score is an adaptation of NEWS2 without respiration rate or
+  consciousness level, and it is not clinically validated. The report's vitals score is the NEWS of
+  the end-of-day averages, which smooths short spikes (peak NEWS is shown next to it). Day-level
+  trend thresholds (HR +10, SpO₂ −3, SBP −15) are illustrative.
+* **Time is compressed.** One simulated day is 5 minutes, so clinical windows are scaled down and
+  the batch job has a 5-minute budget per day. At real time scales it would have a day.
+* **Catch-up is manual.** A scheduled run targets the sim day of its `data_interval_end`, so a late
+  start cannot skip a day. With `catchup=False`, however, days missed while Airflow itself was down are
+  not re-run automatically. `make replay-day DAY=N` covers this, and a production DAG would enable
+  catch-up.
+* **Batch Spark runs in local mode** inside the Airflow scheduler (LocalExecutor). That is fine for
+  about 6 000 readings a day, but in the soak run it took up to 5 minutes and competed with the
+  streaming job for CPU. At hospital scale the job would be submitted to a cluster
+  (SparkSubmitOperator or KubernetesPodOperator). The lake would move to object storage with a table
+  format (Iceberg or Delta), and a partition overwrite would replace the delete + insert.
+* **One Postgres** serves both views and holds the Airflow metadata. Production would separate them
+  and add read replicas for the API.
+* **No security layer.** The API has no authentication. Patient data (PHI) would require
+  authentication, role-based access, audit logging and TLS, and the report files would move from a
+  shared folder to access-controlled storage.
+* **Reconciliation covers counts and heart rate only.** It compares window counts and mean HR. A
+  production version would compare every vital sign and the NEWS per window, and alert on drift in
+  the scoring logic separately from late data.
+
+### 4.5 Consistency paragraph (Lambda chapter)
+
+**Serving and consistency: how the two views are merged (C).** The speed and batch views meet in one
+PostgreSQL database, at two points with different consistency guarantees. (1) **Lab risk into the live
+view:** the batch layer writes `patient_lab_risk` keyed by lab day. The streaming job re-reads the newest
+row per patient in every micro-batch, so the live tier in `patient_status` includes yesterday's labs within
+one trigger (about 5 s) of the DAG committing. This merge is eventually consistent with a bounded lag,
+and because a quarantined lab file writes nothing, the previous lab risk stays in force rather than
+dropping to zero. (2) **The daily report from the batch view:** `patient_risk_report` is computed from the
+immutable Parquet lake, not from the speed tables. Readings that arrived after the 1-minute watermark,
+which the speed layer dropped from its windows, and duplicates that the lake deduplicates by `event_id`
+are therefore counted correctly, and replaying a day reproduces the same report. The API
+(`/api/ward/summary`, `/api/patients/{id}`) then joins the live tables with the newest batch rows at
+query time and exposes the timestamp of each side (data age, latest report day, latest lab day), so a
+reader can see how fresh each part of the answer is. The cost of Lambda is two code paths. We contain it
+with one scoring module (`common/scoring.py`) imported by both layers, and we *measure* the remaining
+disagreement every day. Over a 43-day soak run the speed layer counted on average 0.54 % fewer readings
+than the batch recompute (max 0.99 %, 0 missing windows), all of it explained by late data. The
+consistency argument therefore rests on a number we can show rather than an assumption.
