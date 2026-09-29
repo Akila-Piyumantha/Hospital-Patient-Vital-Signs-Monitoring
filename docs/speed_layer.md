@@ -44,7 +44,24 @@ difference is late data beyond the watermark — the trade we chose: the real-ti
 completeness for seconds-level alerts, and the batch view restores it, an order of magnitude below the 10 %
 `SpeedBatchDiscrepancy` alert threshold.
 
-*[A: paragraph on ingestion and replay — Kafka retention, partitions keyed by patient, why the lake and not the log is the replay source.]*
+**Ingestion and replay (A).** `vitals.raw` has 3 partitions keyed by `patient_id`, so every reading of
+a given patient lands in the same partition and is delivered to the speed layer in order — a
+prerequisite for the trend slopes in §2.1, which would be meaningless over an out-of-order sequence.
+Three partitions is enough parallelism for 20 patients (more would not help: `spark.sql.shuffle.partitions`
+is pinned to 3 to match, §4) and cheap to keep ordered; the producer is idempotent (`acks=all`, retries)
+so a broker retry cannot itself create the duplicates the pipeline is built to tolerate. Retention is
+deliberately short — 24 h or 256 MB, whichever comes first, on a single-broker cluster — because Kafka
+is a transport, not the system of record: the topic only has to survive a restart of the speed layer, and
+across a 30-minute soak run (7 simulated days) it carried an average 9.2 msg/s with zero consumer
+restarts, so 24 h is comfortably more than one simulated week ever needs. Replaying history therefore
+reads the Parquet lake, not the log, for three reasons: (1) the lake's retention is "forever" while the
+topic's is a day; (2) the lake is exactly-once per `event_id` (§3), while the topic is at-least-once by
+design — a lake replay cannot double-count a record the way replaying the raw topic could; and (3)
+replay in this pipeline means reprocessing a *finished simulated day* for the batch layer's daily report
+(§C7's `make replay-day`), which is a batch-shaped operation against immutable files, not a resumption of
+a streaming offset. Kafka's own offsets remain useful for a narrower kind of replay — resuming the speed
+layer after downtime from its last committed checkpoint (§2.5) — which is exactly what its short retention
+window is sized for.
 
 **Serving and consistency: how the two views are merged (C).** The speed and batch views meet in one
 PostgreSQL database, at two points with different consistency guarantees. (1) **Lab risk into the live

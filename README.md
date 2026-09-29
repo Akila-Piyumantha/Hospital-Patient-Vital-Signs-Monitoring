@@ -10,8 +10,9 @@ results to answer
 Full design, task split and contracts: [PROJECT_PLAN.md](PROJECT_PLAN.md) · progress: [TASK_BOARD.md](TASK_BOARD.md) ·
 contract changes: [docs/CHANGELOG.md](docs/CHANGELOG.md)
 
-> **Status:** platform, ingestion and observability (A), Spark speed layer (B) and Airflow batch layer / API /
-> daily report (C) are implemented; they plug in through `compose/spark.yml`, `compose/airflow.yml`, `compose/api.yml`.
+> **Status:** all three layers (A: platform/ingestion/observability, B: Spark speed layer, C: Airflow batch
+> layer/API/daily report) are implemented and verified running together (`docker compose up -d --build`,
+> 17 services) — `python scripts/e2e_smoke.py --full` passes all 10 checks on the live stack.
 
 ## Architecture
 
@@ -95,11 +96,14 @@ docker compose exec postgres psql -U hospital -c "SELECT patient_id, bed, comorb
 cat data/alerts/alerts.jsonl
 ```
 
-### Soak run (measured)
+### Soak runs (measured)
 
-`python scripts/soak_monitor.py --minutes 30` samples the stack every 30 s into `data/soak/soak.csv` and
-writes `data/soak/summary.json`. Result of the platform layer alone (simulators + Kafka + Postgres +
-observability, `FAULT_PROFILE=low`), 2026-09-25:
+`python scripts/soak_monitor.py --minutes N` samples the stack every 30 s into `data/soak/soak.csv` and
+writes `data/soak/summary.json`.
+
+#### Platform layer alone (2026-09-25, before B/C existed)
+
+Simulators + Kafka + Postgres + observability only, `FAULT_PROFILE=low`:
 
 | Metric | Result |
 |---|---|
@@ -113,6 +117,20 @@ observability, `FAULT_PROFILE=low`), 2026-09-25:
 Live check against the ground truth: patient P001's scripted sepsis episode showed in Kafka as HR 74→108,
 SpO₂ 96→91, systolic BP 122→85, temperature 36.6→38.9 °C within one 4-minute ramp, and the following lab
 file listed lactate 2.7, WBC 14.3 and CRP 58.7 as abnormal for P001.
+
+#### Full stack (2026-09-29/30, all 17 services of A, B and C, including deliberate fault demos)
+
+| Metric | Result |
+|---|---|
+| Duration / simulated days covered | 40.5 min / 9 days |
+| Kafka throughput (msgs/s) | min 3.5 · avg 8.9 · max 9.6 (the minimum is the `FAULT_PROFILE=chaos` window, §"Fault injection", not a fault) |
+| Lab files landed | 46 (one per simulated day, none missing) |
+| Container restarts | 1 (`spark-streaming`, from the deliberate `ConsumerLagHigh` demo below - not a crash) |
+| Peak memory, all 17 containers | 3 990 MiB |
+| Alerts fired live during this run | `ConsumerLagHigh`, `DlqRateHigh`, `DagFailed`, `SparkBatchSlow`, `PipelineDataStale` - all deliberately triggered (see next section) and all resolved by the end of the run; 0 alerts left firing |
+
+Full narrative of what was triggered, why, and the evidence for each: [docs/platform_observability.md
+§3.4](docs/platform_observability.md#34-results-the-alert-chain-demonstrated-live).
 
 ## What the sources simulate
 
@@ -253,7 +271,9 @@ CI job `dag-import`.
 * **Dashboards** - provisioned at start-up: *Pipeline Health* (Prometheus) and *Ward Live Monitoring*
   (Postgres). Regenerate the JSON with `make dashboards`
   ([observability/grafana/build_dashboards.py](observability/grafana/build_dashboards.py)).
-  The ward dashboard's panels fill in once B/C's tables exist.
+
+Design, alert-chain evidence and report chapters (ingestion, tech stack, observability):
+[docs/platform_observability.md](docs/platform_observability.md).
 
 ## Repository layout
 

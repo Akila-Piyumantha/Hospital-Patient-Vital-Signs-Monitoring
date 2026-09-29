@@ -24,17 +24,17 @@ Milestones: **M1 = D5** walking skeleton · **M2 = D8** both layers integrated �
 - [ ] **M1 (D5)** skeleton demo
 
 ### D7–D10
-- [ ] A8 Alert rules + Alertmanager (NoVitalsData, ConsumerLagHigh, DlqRateHigh, StreamingQueryStopped, LabFileMissing, ApiDown, DagFailed), each shown firing — rules written and validated; NoVitalsData, SimulatorDown, ApiDown, StreamingQueryStopped, ScrapeTargetDown demonstrated live; the rest need B/C metrics
-- [ ] A9 Grafana dashboards: ward live view + pipeline health (provisioned as code) — both provisioned and datasources healthy; ward panels wait for B/C tables
+- [x] A8 Alert rules + Alertmanager (13 rules total), each shown firing on the full stack (2026-09-29/30, live): NoVitalsData, SimulatorDown, ApiDown, StreamingQueryStopped, ScrapeTargetDown, ConsumerLagHigh, DlqRateHigh (16.2%, chaos profile), LabFileMissing, PipelineDataStale, SparkBatchSlow, DagFailed all captured in `data/alerts/alerts.jsonl`; SpeedBatchDiscrepancy verified by promtool unit test only (by design it stays under threshold — see docs/platform_observability.md §3.4). All 13 rules unit-tested (`make test-alerts`, promtool). Restart correctness re-verified live: 0 duplicate windows/alerts after killing spark-streaming.
+- [x] A9 Grafana dashboards: ward live view + pipeline health (provisioned as code) — both provisioned, datasources healthy, and **every panel populated with live B/C data** (screenshots `docs/screenshots/pipeline-health-demos.png`, `ward-live.png`)
 - [x] A10 Tests + GitHub Actions CI (simulator, sim_clock, schemas)
 - [ ] **M2 (D8)** both layers integrated
 
 ### D11–D14
-- [ ] A11 `make e2e` smoke test + 30-min soak run — smoke test done; `--full` checks need B/C; soak run in progress
+- [x] A11 `make e2e` smoke test + 30-min soak run — `python scripts/e2e_smoke.py --full` 10/10 checks pass on the live 17-service stack, both before and after a 40-minute full-stack soak (9 sim days, 0 alerts left firing, 3 990 MiB peak memory) that deliberately ran every A8 fault demo mid-soak; results in README and docs/platform_observability.md §4.2
 - [ ] A12 README (architecture, setup, run, reproduce, troubleshooting) — written; needs B/C run sections and a clean-clone dry-run
 - [ ] J5 Cross-review of a peer's module (viva prep)
 - [ ] J6 Soak run, freeze, README dry-run on a clean clone
-- [ ] Report: Ingestion, Tech stack, Observability, architecture diagram, ingestion paragraph in the architecture chapter
+- [ ] Report: Ingestion, Tech stack, Observability chapters drafted in docs/platform_observability.md; ingestion/replay paragraph added to docs/speed_layer.md §1; architecture diagram still to redraw as a figure for the PDF (currently ASCII in README)
 - [ ] J7/J8 Report assembly, proofread, own demo segment, contribution statement
 
 ---

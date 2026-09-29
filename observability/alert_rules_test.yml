@@ -161,6 +161,59 @@ tests:
               summary: "Vitals simulator is unreachable"
               description: "Prometheus cannot scrape vitals-simulator:8001."
 
+  # ------------------------------------------------------------------ Producer errors
+  - name: ProducerDeliveryErrors fires on any sustained delivery failure rate
+    interval: 10s
+    input_series:
+      - series: 'vitals_produce_errors_total{job="vitals-simulator"}'
+        values: '0x10 0+1x20'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ProducerDeliveryErrors
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: ProducerDeliveryErrors
+        exp_alerts:
+          - exp_labels: {severity: warning, stage: ingestion, job: vitals-simulator}
+            exp_annotations:
+              summary: "Kafka delivery failures in the vitals producer"
+              description: "100m failed deliveries/s."
+
+  # ------------------------------------------------------------------ Spark batch duration
+  - name: SparkBatchSlow fires when micro-batches stay above 10s for 2 minutes
+    interval: 10s
+    input_series:
+      - series: 'spark_batch_duration_seconds{job="spark-streaming",query="vitals_readings"}'
+        values: '3x10 12x20'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: SparkBatchSlow
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: SparkBatchSlow
+        exp_alerts:
+          - exp_labels: {severity: warning, stage: processing, job: spark-streaming, query: vitals_readings}
+            exp_annotations:
+              summary: "Micro-batches take longer than 10s"
+              description: "Trigger interval is 5-10s; sustained slow batches mean lag will build up."
+
+  # ------------------------------------------------------------------ Scrape target down (platform group)
+  - name: ScrapeTargetDown fires for the listed jobs but not for others
+    interval: 10s
+    input_series:
+      - series: 'up{job="lab-generator",instance="lab-generator:8002"}'
+        values: '1x10 0x10'
+      - series: 'up{job="postgres-exporter",instance="postgres-exporter:9187"}'
+        values: '1x10 0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ScrapeTargetDown
+        exp_alerts:
+          - exp_labels: {severity: warning, stage: observability, job: lab-generator, instance: "lab-generator:8002"}
+            exp_annotations:
+              summary: "Scrape target lab-generator is down"
+              description: "lab-generator:8002 has not answered for 1 minute."
+
   # ------------------------------------------------------------------ Lambda consistency
   - name: SpeedBatchDiscrepancy fires above 10%
     interval: 30s
