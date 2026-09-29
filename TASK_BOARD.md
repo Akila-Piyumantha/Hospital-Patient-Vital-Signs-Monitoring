@@ -31,7 +31,7 @@ Milestones: **M1 = D5** walking skeleton · **M2 = D8** both layers integrated �
 
 ### D11–D14
 - [x] A11 `make e2e` smoke test + 30-min soak run — `python scripts/e2e_smoke.py --full` 10/10 checks pass on the live 17-service stack, both before and after a 40-minute full-stack soak (9 sim days, 0 alerts left firing, 3 990 MiB peak memory) that deliberately ran every A8 fault demo mid-soak; results in README and docs/platform_observability.md §4.2
-- [ ] A12 README (architecture, setup, run, reproduce, troubleshooting) — written; needs B/C run sections and a clean-clone dry-run
+- [x] A12 README (architecture, setup, run, reproduce, troubleshooting) — B/C run sections included; clean-clone dry-run done via `git worktree` at `HEAD` (empty `data/`, `docker compose config` validates with no `.env`, `docker compose build` succeeds for all 9 images from a fresh checkout, `pytest --collect-only` finds all 196 tests with no import errors)
 - [ ] J5 Cross-review of a peer's module (viva prep)
 - [ ] J6 Soak run, freeze, README dry-run on a clean clone
 - [ ] Report: Ingestion, Tech stack, Observability chapters drafted in docs/platform_observability.md; ingestion/replay paragraph added to docs/speed_layer.md §1; architecture diagram still to redraw as a figure for the PDF (currently ASCII in README)
