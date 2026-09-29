@@ -175,9 +175,9 @@ docker compose exec postgres psql -U hospital -c \
 docker compose exec postgres psql -U hospital -c "SELECT reason, count(*) FROM dlq_events GROUP BY 1"
 ```
 
-**Lab feedback loop without Airflow** (stand-in for Member C's `compute_lab_risk`, until the DAG exists):
-`docker compose exec spark-streaming python -m streaming.lab_risk_fixture --day 2`. Within one trigger (5 s) the
-job logs `lab_risk_applied` / `risk_tier_changed` for patients with abnormal labs.
+**Lab feedback loop:** when the Airflow DAG writes `patient_lab_risk` (every sim day, or `make replay-day DAY=N`),
+the job picks the new rows up within one trigger (5 s) and logs `lab_risk_applied` / `risk_tier_changed` for
+patients whose lab points changed: `docker compose logs spark-streaming | grep -E 'lab_risk_applied|risk_tier_changed'`.
 
 **Restart / exactly-once check:** `docker compose restart spark-streaming`, then
 `SELECT patient_id, window_start, count(*) FROM vitals_window GROUP BY 1,2 HAVING count(*) > 1` (no rows) and

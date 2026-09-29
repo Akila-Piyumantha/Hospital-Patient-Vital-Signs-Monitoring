@@ -44,30 +44,30 @@ Milestones: **M1 = D5** walking skeleton · **M2 = D8** both layers integrated �
 **Name:** ________
 
 ### D1–D5
-- [ ] B1 `common/scoring.py` with unit tests for every threshold boundary — done, awaiting PR review
-- [ ] B2 Spark container (connector versions pinned, JDBC driver, submit command in Compose) — done (`streaming/Dockerfile`, `compose/spark.yml`), awaiting PR review
-- [ ] B3 Ingest and validate: schema, casting, range checks, DLQ, dedupe by `event_id` — done; live: input 21 255 = valid 20 633 + DLQ 419 + dropped 203
+- [x] B1 `common/scoring.py` with unit tests for every threshold boundary — done (PR #1)
+- [x] B2 Spark container (connector versions pinned, JDBC driver, submit command in Compose) — done (`streaming/Dockerfile`, `compose/spark.yml`); built and run on the full stack
+- [x] B3 Ingest and validate: schema, casting, range checks, DLQ, dedupe by `event_id` — done; live: input 21 255 = valid 20 633 + DLQ 419 + dropped 203
 - [ ] J1 Kickoff workshop attended, decisions confirmed
-- [ ] J2 Contracts signed off; review `sql/init.sql` streaming tables — B's tables proposed in `sql/02_speed_layer.sql` (see docs/CHANGELOG.md), C to confirm
+- [x] J2 Contracts signed off; review `sql/init.sql` streaming tables — `sql/02_speed_layer.sql` confirmed by C, `init.sql` reviewed (identical `patient_lab_risk`); all B rows in docs/CHANGELOG.md agreed
 - [ ] **M1 (D5)** skeleton demo
 
 ### D4–D8
-- [ ] B4 Enrichment: join with `patients`, MAP, pulse pressure, per-reading `news_score` — done, awaiting PR review
-- [ ] B5 Windowed aggregation (2 min / 30 s, 1 min watermark), trend slopes, sustained-abnormal counter — done; hand-computed fixture test green
-- [ ] B6 `foreachBatch` sinks: idempotent Postgres upserts + Parquet by `sim_day`, checkpoints, kill/restart test — done; kill -9 mid-batch → replay, no duplicates (docs/speed_layer.md §4.2)
+- [x] B4 Enrichment: join with `patients`, MAP, pulse pressure, per-reading `news_score` — done (PR #1)
+- [x] B5 Windowed aggregation (2 min / 30 s, 1 min watermark), trend slopes, sustained-abnormal counter — done; hand-computed fixture test green
+- [x] B6 `foreachBatch` sinks: idempotent Postgres upserts + Parquet by `sim_day`, checkpoints, kill/restart test — done; kill -9 mid-batch → replay, no duplicates (docs/speed_layer.md §4.2)
 - [ ] **M2 (D8)** both layers integrated
 
 ### D7–D11
-- [ ] B7 Alert engine: rules, severity, reason codes, cooldown, open/resolved lifecycle — done, awaiting PR review
-- [ ] B8 Lab feedback loop: stream-static join with `patient_lab_risk`, before/after evidence — done with a stand-in loader (`streaming/lab_risk_fixture.py`); re-check with C's DAG at M2
-- [ ] B9 Streaming metrics via `StreamingQueryListener` + structured logs per micro-batch — done; also commits offsets to group `spark-speed-layer` for ConsumerLagHigh
-- [ ] B10 Unit tests + local-mode Spark integration test — done; 91 tests green in Linux container, CI job `spark-tests` added
+- [x] B7 Alert engine: rules, severity, reason codes, cooldown, open/resolved lifecycle — done (PR #1)
+- [x] B8 Lab feedback loop: stream-static join with `patient_lab_risk`, before/after evidence — done; verified with C's DAG on the full stack (P012 LOW → MEDIUM seconds after the day-4 run, docs/batch_serving.md §2.1); stand-in loader removed
+- [x] B9 Streaming metrics via `StreamingQueryListener` + structured logs per micro-batch — done; also commits offsets to group `spark-speed-layer` for ConsumerLagHigh
+- [x] B10 Unit tests + local-mode Spark integration test — done; 91 tests green in Linux container, CI job `spark-tests` added
 
 ### D10–D14
-- [ ] B11 Performance/tuning notes — measured, in docs/speed_layer.md §4
+- [x] B11 Performance/tuning notes — measured, in docs/speed_layer.md §4
 - [ ] J5 Cross-review of a peer's module (viva prep)
 - [ ] J6 Soak run, freeze
-- [ ] Report: Lambda vs Kappa chapter (with A's and C's paragraphs), processing layer, storage design — drafts in docs/speed_layer.md §1-3; A and C paragraphs pending
+- [ ] Report: Lambda vs Kappa chapter (with A's and C's paragraphs), processing layer, storage design — text in docs/speed_layer.md §1-3 incl. C's paragraph and the 41-day discrepancy evidence; A's paragraph pending
 - [ ] J7/J8 Report assembly review, own demo segment, contribution statement
 
 ---
