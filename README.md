@@ -7,8 +7,7 @@ results to answer
 > *Which patients show concerning vital-sign trends right now, and how do yesterday's lab results
 > change the risk picture for those patients going forward?*
 
-Full design, task split and contracts: [PROJECT_PLAN.md](PROJECT_PLAN.md) · progress: [TASK_BOARD.md](TASK_BOARD.md) ·
-contract changes: [docs/CHANGELOG.md](docs/CHANGELOG.md)
+Design rationale, results and limitations are in the accompanying technical report (submitted separately).
 
 > **Status:** all three layers (A: platform/ingestion/observability, B: Spark speed layer, C: Airflow batch
 > layer/API/daily report) are implemented and verified running together (`docker compose up -d --build`,
@@ -129,8 +128,7 @@ file listed lactate 2.7, WBC 14.3 and CRP 58.7 as abnormal for P001.
 | Peak memory, all 17 containers | 3 990 MiB |
 | Alerts fired live during this run | `ConsumerLagHigh`, `DlqRateHigh`, `DagFailed`, `SparkBatchSlow`, `PipelineDataStale` - all deliberately triggered (see next section) and all resolved by the end of the run; 0 alerts left firing |
 
-Full narrative of what was triggered, why, and the evidence for each: [docs/platform_observability.md
-§3.4](docs/platform_observability.md#34-results-the-alert-chain-demonstrated-live).
+What was triggered, why, and the evidence for each alert: see the technical report (Observability chapter).
 
 ## What the sources simulate
 
@@ -207,8 +205,6 @@ patients whose lab points changed: `docker compose logs spark-streaming | grep -
 `winutils.exe`; they run in CI job `spark-tests` or in the container:
 `docker compose run --rm --no-deps -v "$PWD/tests:/app/tests" -v "$PWD/simulators:/app/simulators" spark-streaming sh -c "pip install -q pytest && python -m pytest -q -p no:cacheprovider tests/streaming tests/common/test_scoring.py"`).
 
-Design, tuning notes and the report chapters: [docs/speed_layer.md](docs/speed_layer.md).
-
 ## Batch layer (Airflow) and serving API
 
 Services `airflow-init`, `airflow-webserver`, `airflow-scheduler` ([compose/airflow.yml](compose/airflow.yml)) and
@@ -245,7 +241,7 @@ docker compose exec postgres psql -U hospital -c "SELECT * FROM speed_batch_reco
 
 Day numbering: the run for day N loads `labs_day_N.csv` (labs collected on day N-1), writes lab risk `as_of_sim_day = N`,
 recomputes the vitals of day N-1 and produces the report for day N. Failure handling (replay, corrupt / bad-schema /
-missing file), the reconciliation formula and the report chapter drafts: [docs/batch_serving.md](docs/batch_serving.md).
+missing file) and the reconciliation formula are described in the technical report.
 
 **Tests:** `pytest tests/batch tests/serving` - pure-Python tests always run; the database tests use a throw-away
 database on the Postgres at `localhost:5432` (e.g. the Compose one; override with `TEST_POSTGRES_HOST`/`_PORT`/`_USER`/`_PASSWORD`)
@@ -271,9 +267,6 @@ CI job `dag-import`.
 * **Dashboards** - provisioned at start-up: *Pipeline Health* (Prometheus) and *Ward Live Monitoring*
   (Postgres). Regenerate the JSON with `make dashboards`
   ([observability/grafana/build_dashboards.py](observability/grafana/build_dashboards.py)).
-
-Design, alert-chain evidence and report chapters (ingestion, tech stack, observability):
-[docs/platform_observability.md](docs/platform_observability.md).
 
 ## Repository layout
 
@@ -303,8 +296,6 @@ ruff check . && ruff format --check .
 python -m simulators.vitals_producer --dry-run     # print readings to stdout, no Kafka needed
 python -m simulators.lab_generator --once 3 --out-dir /tmp/labs
 ```
-
-Team conventions (branches, reviews, contract changes): see PROJECT_PLAN.md §9.
 
 ## Assumptions and simplifications
 
